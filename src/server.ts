@@ -37,6 +37,7 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 
 mongoose
   .connect(env.MONGO_CONN, {
+    dbName: env.MONGO_DB_NAME,
     maxPoolSize: 20,
     minPoolSize: 1,
     serverSelectionTimeoutMS: 10_000,

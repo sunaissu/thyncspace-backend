@@ -53,6 +53,14 @@ from the repository root and run `dist/server.js` as the unprivileged
 `thyncspace` service user. Production secrets belong in a managed secret store,
 not `.env` inside the Git checkout.
 
+Production database authentication is selected explicitly with
+`MONGO_AUTH_MODE`. The current EC2 deployment uses `aws-iam` with a passwordless
+`MONGODB-AWS` URI and credentials obtained from the attached instance role. A
+future non-AWS deployment can use `password` with URL-encoded Atlas SCRAM
+credentials stored in that platform's managed secret store. Use exactly one
+mode and one `MONGO_CONN` value at a time; `.env.example` documents both forms
+with AWS IAM active by default.
+
 The public API is `https://thyncspace-api.bg-labs.com`, and `CLIENT_URL` must be
 exactly `https://thyncspace.bg-labs.com`.
 

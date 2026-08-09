@@ -3,6 +3,10 @@ import { port, str } from "envalid/dist/validators";
 
 const env = cleanEnv(process.env, {
   MONGO_CONN: str(),
+  MONGO_AUTH_MODE: str({
+    choices: ["aws-iam", "password"],
+    default: "aws-iam",
+  }),
   MONGO_DB_NAME: str(),
   PORT: port({ default: 5000 }),
   HOST: str({ default: "127.0.0.1" }),
@@ -69,13 +73,54 @@ if (!/^[a-zA-Z0-9_-]{1,63}$/.test(env.MONGO_DB_NAME)) {
   throw new Error("MONGO_DB_NAME contains unsupported characters");
 }
 
-if (env.ENVIRONMENT === "production" && env.MONGO_CONN.startsWith("mongodb://")) {
-  const mongoParameters = new URLSearchParams(env.MONGO_CONN.split("?", 2)[1] ?? "");
-  const tlsEnabled = ["true", "1"].includes(
-    mongoParameters.get("tls") ?? mongoParameters.get("ssl") ?? "",
-  );
-  if (!tlsEnabled) {
-    throw new Error("Production mongodb:// connections must enable TLS");
+if (env.ENVIRONMENT === "production") {
+  let mongoUrl: URL;
+
+  try {
+    mongoUrl = new URL(env.MONGO_CONN);
+  } catch {
+    throw new Error("MONGO_CONN must be a valid MongoDB connection string");
+  }
+
+  if (mongoUrl.protocol !== "mongodb+srv:") {
+    throw new Error("Production MONGO_CONN must use mongodb+srv");
+  }
+
+  if (env.MONGO_AUTH_MODE === "aws-iam") {
+    if (mongoUrl.username || mongoUrl.password) {
+      throw new Error("AWS IAM MongoDB authentication must not use URI credentials");
+    }
+
+    if (
+      mongoUrl.searchParams.get("authSource") !== "$external" ||
+      mongoUrl.searchParams.get("authMechanism") !== "MONGODB-AWS"
+    ) {
+      throw new Error(
+        "AWS IAM MongoDB authentication requires authSource=$external and " +
+          "authMechanism=MONGODB-AWS",
+      );
+    }
+
+    if (
+      process.env.AWS_ACCESS_KEY_ID ||
+      process.env.AWS_SECRET_ACCESS_KEY ||
+      process.env.AWS_SESSION_TOKEN
+    ) {
+      throw new Error(
+        "AWS IAM production authentication must use the attached role, not AWS environment credentials",
+      );
+    }
+  } else {
+    if (!mongoUrl.username || !mongoUrl.password) {
+      throw new Error("Password MongoDB authentication requires URI credentials");
+    }
+
+    if (
+      mongoUrl.searchParams.get("authSource") === "$external" ||
+      mongoUrl.searchParams.get("authMechanism") === "MONGODB-AWS"
+    ) {
+      throw new Error("Password MongoDB authentication cannot use MONGODB-AWS options");
+    }
   }
 }
 
