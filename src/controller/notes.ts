@@ -1,0 +1,382 @@
+import type { Request, RequestHandler } from "express";
+import createHttpError from "http-errors";
+import mongoose from "mongoose";
+import NoteModel from "../models/note.model";
+import UserModel from "../models/user.model";
+import * as NoteRepository from "../repositories/note.repository";
+import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums";
+import { createCollaborationToken } from "../util/collaborationToken";
+import { toNoteResponse } from "../util/noteResponse";
+import {
+  disconnectCollaborator,
+  disconnectNote,
+  updateCollaboratorPermission,
+} from "../collaboration/server";
+import {
+  MAX_IMPORT_CONTENT_BYTES,
+  MAX_IMPORT_NOTES,
+  validateNoteContent,
+  validateNoteTitle,
+  validateNoteType,
+  validateShareIdentifier,
+} from "../util/validation";
+
+const requireValidNoteId = (noteId: string) => {
+  if (!mongoose.isValidObjectId(noteId)) {
+    throw createHttpError(400, "Invalid note ID");
+  }
+};
+
+const getUserId = (req: Request) => {
+  if (!req.user) throw createHttpError(401, "Authentication required");
+  return req.user.id;
+};
+
+const getOwnedNote = async (noteId: string, userId: string) => {
+  requireValidNoteId(noteId);
+  const note = await NoteModel.findOne({
+    _id: noteId,
+    status: NoteStatus.Active,
+  }).exec();
+  if (!note) throw createHttpError(404, "Note not found");
+  if (note.owner.toString() !== userId) {
+    throw createHttpError(403, "Only the owner can manage sharing");
+  }
+  return note;
+};
+
+export const getNotes: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req);
+    const notes = await NoteRepository.findNotesByOwner(userId);
+    res.status(200).json(notes.map((note) => toNoteResponse(note, userId)));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSharedNotes: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req);
+    const notes = await NoteRepository.findSharedNotesByUser(userId);
+    res.status(200).json(notes.map((note) => toNoteResponse(note, userId)));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getFavoriteNotes: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = getUserId(req);
+    const notes = await NoteRepository.findFavoritedNotesByUser(userId);
+    res.status(200).json(notes.map((note) => toNoteResponse(note, userId)));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getNote: RequestHandler = async (req, res, next) => {
+  const noteId = req.params.noteId as string;
+  try {
+    requireValidNoteId(noteId);
+    const note = await NoteModel.findOne({
+      _id: noteId,
+      status: NoteStatus.Active,
+    }).exec();
+    if (!note) throw createHttpError(404, "Note not found");
+
+    const userId = getUserId(req);
+    const hasAccess =
+      note.owner.toString() === userId ||
+      note.sharedWith.some((entry) => entry.userId.toString() === userId);
+    if (!hasAccess) {
+      throw createHttpError(403, "You do not have access to this note");
+    }
+    res.status(200).json(toNoteResponse(note, userId));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createNote: RequestHandler = async (req, res, next) => {
+  try {
+    const title = validateNoteTitle(req.body?.title);
+    const content = validateNoteContent(req.body?.text);
+    const type = validateNoteType(req.body?.type);
+    const userId = getUserId(req);
+    const newNote = await NoteModel.create({
+      title,
+      content: content ?? "",
+      type,
+      owner: userId,
+    });
+    res.status(201).json(toNoteResponse(newNote, userId));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const importNotes: RequestHandler = async (req, res, next) => {
+  try {
+    if (!Array.isArray(req.body?.notes) || req.body.notes.length === 0) {
+      throw createHttpError(400, "At least one note is required");
+    }
+    if (req.body.notes.length > MAX_IMPORT_NOTES) {
+      throw createHttpError(413, `Import at most ${MAX_IMPORT_NOTES} notes at once`);
+    }
+
+    let totalContentBytes = 0;
+    const userId = getUserId(req);
+    const notesToCreate = req.body.notes.map((input: unknown) => {
+      if (typeof input !== "object" || input === null) {
+        throw createHttpError(400, "Every imported note must be an object");
+      }
+      const candidate = input as Record<string, unknown>;
+      const content = validateNoteContent(candidate.text) ?? "";
+      totalContentBytes += Buffer.byteLength(content, "utf8");
+      return {
+        owner: userId,
+        title: validateNoteTitle(candidate.title),
+        type: NoteType.Document,
+        content,
+      };
+    });
+    if (totalContentBytes > MAX_IMPORT_CONTENT_BYTES) {
+      throw createHttpError(413, "The selected import is too large");
+    }
+
+    const session = await mongoose.startSession();
+    try {
+      const createdNotes = await session.withTransaction(() =>
+        NoteModel.insertMany(notesToCreate, { session }),
+      );
+      if (!createdNotes) throw new Error("Import transaction did not complete");
+      res
+        .status(201)
+        .json(
+          createdNotes.map((note: InstanceType<typeof NoteModel>) =>
+            toNoteResponse(note, userId),
+          ),
+        );
+    } finally {
+      await session.endSession();
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateNote: RequestHandler = async (req, res, next) => {
+  const noteId = req.params.noteId as string;
+  try {
+    requireValidNoteId(noteId);
+    if (req.body.title === undefined && req.body.text === undefined) {
+      throw createHttpError(400, "Nothing to update");
+    }
+
+    const title =
+      req.body.title === undefined ? undefined : validateNoteTitle(req.body.title);
+    const content = validateNoteContent(req.body.text);
+    const userId = getUserId(req);
+    const changes: { content?: string; title?: string } = {};
+    if (title !== undefined) changes.title = title;
+    if (content !== undefined) changes.content = content;
+    const updatedNote = await NoteModel.findOneAndUpdate(
+      {
+        _id: noteId,
+        status: NoteStatus.Active,
+        $or: [
+          { owner: userId },
+          {
+            sharedWith: {
+              $elemMatch: {
+                userId,
+                permission: PermissionLevel.Editor,
+              },
+            },
+          },
+        ],
+      },
+      { $set: changes },
+      { new: true, runValidators: true },
+    ).exec();
+    if (!updatedNote) {
+      const noteExists = await NoteModel.exists({
+        _id: noteId,
+        status: NoteStatus.Active,
+      });
+      throw createHttpError(
+        noteExists ? 403 : 404,
+        noteExists
+          ? "You do not have permission to edit this note"
+          : "Note not found",
+      );
+    }
+    res.status(200).json(toNoteResponse(updatedNote, userId));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteNote: RequestHandler = async (req, res, next) => {
+  const noteId = req.params.noteId as string;
+  try {
+    requireValidNoteId(noteId);
+    const note = await NoteModel.findOne({
+      _id: noteId,
+      status: NoteStatus.Active,
+    }).exec();
+    if (!note) throw createHttpError(404, "Note not found");
+    if (note.owner.toString() !== getUserId(req)) {
+      throw createHttpError(403, "Only the owner can delete this note");
+    }
+
+    disconnectNote(noteId);
+    await note.deleteOne();
+    res.sendStatus(204);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const toggleFavorite: RequestHandler = async (req, res, next) => {
+  const noteId = req.params.noteId as string;
+  try {
+    requireValidNoteId(noteId);
+    const userId = getUserId(req);
+    const note = await NoteModel.findOne({
+      _id: noteId,
+      status: NoteStatus.Active,
+    })
+      .select("owner sharedWith")
+      .exec();
+    if (!note) throw createHttpError(404, "Note not found");
+
+    const hasAccess =
+      note.owner.toString() === userId ||
+      note.sharedWith.some((entry) => entry.userId.toString() === userId);
+    if (!hasAccess) {
+      throw createHttpError(403, "You do not have access to this note");
+    }
+
+    const updatedNote = await NoteRepository.toggleFavorite(noteId, userId);
+    if (!updatedNote) throw createHttpError(404, "Note not found");
+    res.status(200).json(toNoteResponse(updatedNote, userId));
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const createRealtimeToken: RequestHandler = async (req, res, next) => {
+  const noteId = req.params.noteId as string;
+  try {
+    requireValidNoteId(noteId);
+    const userId = getUserId(req);
+    const note = await NoteModel.findOne({
+      _id: noteId,
+      status: NoteStatus.Active,
+    })
+      .select("owner sharedWith")
+      .exec();
+    if (!note) throw createHttpError(404, "Note not found");
+    const hasAccess =
+      note.owner.toString() === userId ||
+      note.sharedWith.some((entry) => entry.userId.toString() === userId);
+    if (!hasAccess) {
+      throw createHttpError(403, "You do not have access to this note");
+    }
+    res.status(200).json({ token: createCollaborationToken(noteId, userId) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getCollaborators: RequestHandler = async (req, res, next) => {
+  const noteId = req.params.noteId as string;
+  try {
+    const note = await getOwnedNote(noteId, getUserId(req));
+    const users = await UserModel.find({
+      _id: { $in: note.sharedWith.map((entry) => entry.userId) },
+    })
+      .select("username +email")
+      .exec();
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    res.status(200).json(
+      note.sharedWith.flatMap((entry) => {
+        const user = usersById.get(entry.userId.toString());
+        return user
+          ? [{
+              userId: user.id,
+              username: user.username,
+              email: user.email,
+              permission: entry.permission,
+            }]
+          : [];
+      }),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const shareNote: RequestHandler = async (req, res, next) => {
+  const noteId = req.params.noteId as string;
+  try {
+    const ownerId = getUserId(req);
+    const note = await getOwnedNote(noteId, ownerId);
+    const identifier = validateShareIdentifier(req.body?.identifier);
+    const permission = req.body?.permission as PermissionLevel;
+    if (![PermissionLevel.Viewer, PermissionLevel.Editor].includes(permission)) {
+      throw createHttpError(400, "Permission must be viewer or editor");
+    }
+
+    const collaborator = await UserModel.findOne({
+      $or: [{ username: identifier }, { email: identifier.toLowerCase() }],
+    })
+      .collation({ locale: "en", strength: 2 })
+      .select("username +email")
+      .exec();
+    if (!collaborator) throw createHttpError(404, "User not found");
+    if (collaborator.id === ownerId) {
+      throw createHttpError(400, "The owner already has full access");
+    }
+
+    const existing = note.sharedWith.find(
+      (entry) => entry.userId.toString() === collaborator.id,
+    );
+    if (existing) existing.permission = permission;
+    else note.sharedWith.push({ userId: collaborator._id, permission });
+    await note.save();
+    updateCollaboratorPermission(noteId, collaborator.id, permission);
+
+    res.status(existing ? 200 : 201).json({
+      userId: collaborator.id,
+      username: collaborator.username,
+      email: collaborator.email,
+      permission,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const unshareNote: RequestHandler = async (req, res, next) => {
+  const noteId = req.params.noteId as string;
+  const collaboratorId = req.params.userId as string;
+  try {
+    requireValidNoteId(collaboratorId);
+    const note = await getOwnedNote(noteId, getUserId(req));
+    const previousLength = note.sharedWith.length;
+    note.sharedWith = note.sharedWith.filter(
+      (entry) => entry.userId.toString() !== collaboratorId,
+    );
+    if (note.sharedWith.length === previousLength) {
+      throw createHttpError(404, "Collaborator not found");
+    }
+    await note.save();
+    disconnectCollaborator(noteId, collaboratorId);
+    res.sendStatus(204);
+  } catch (error) {
+    next(error);
+  }
+};
