@@ -1,0 +1,56 @@
+{
+  "name": "@sunaissu/thyncspace-backend",
+  "version": "2.0.0",
+  "description": "Private API and collaboration service for ThyncSpace.",
+  "private": true,
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
+    "start": "node dist/server.js",
+    "lint": "eslint . --ext .ts",
+    "serve": "concurrently \"tsc --watch\" \"nodemon dist/server.js\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^4.5.0",
+    "bcrypt": "^6.0.0",
+    "connect-mongo": "^5.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "envalid": "^8.2.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "express-session": "^1.19.0",
+    "helmet": "^8.3.0",
+    "http-errors": "^2.0.0",
+    "mongoose": "^7.8.11",
+    "morgan": "^1.11.0",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "ws": "^8.21.2",
+    "yjs": "^13.6.31"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.13",
+    "@types/express": "^5.0.6",
+    "@types/express-session": "^1.17.7",
+    "@types/http-errors": "^2.0.1",
+    "@types/morgan": "^1.9.4",
+    "@types/passport": "^1.0.17",
+    "@types/passport-google-oauth20": "^2.0.17",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^5.59.11",
+    "@typescript-eslint/parser": "^5.59.11",
+    "concurrently": "^8.2.0",
+    "eslint": "^8.42.0",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.1.3"
+  }
+}
