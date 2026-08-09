@@ -1,0 +1,48 @@
+# Local development only. Production MongoDB must use authenticated private
+# networking, TLS, encrypted storage, backups, and a replica set spanning hosts.
+#
+# A single replica-set member is intentional here: it supports transactions while
+# advertising localhost, so applications running on the host can reconnect to the
+# address returned by MongoDB. It provides no production redundancy.
+services:
+  mongo:
+    image: mongo:8.0
+    container_name: thyncspace-mongo
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mongo-init:
+    image: mongo:8.0
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    entrypoint:
+      - mongosh
+      - mongodb://mongo:27017/admin
+      - --quiet
+      - --eval
+      - >-
+        try {
+          rs.status();
+        } catch (error) {
+          rs.initiate({
+            _id: "rs0",
+            members: [{ _id: 0, host: "localhost:27017" }]
+          });
+        }
+
+volumes:
+  mongo-data:
