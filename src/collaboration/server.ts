@@ -28,8 +28,8 @@ const TEXT_KEY = "document-content";
 const TITLE_KEY = "note-title";
 const VIEWPORT_KEY = "noteboard-viewport";
 const CLIENT_ORIGIN = new URL(env.CLIENT_URL).origin;
-const ACCESS_RECHECK_INTERVAL_MS = 5_000;
-const COLLABORATION_TOKEN_SWEEP_MS = 5_000;
+const ACCESS_RECHECK_INTERVAL_MS = 60_000;
+const COLLABORATION_TOKEN_SWEEP_MS = 60_000;
 const MAX_COLLABORATION_STATE_BYTES = 8 * 1024 * 1024;
 const MAX_UPGRADES_PER_MINUTE = 60;
 const MAX_TRACKED_UPGRADE_ADDRESSES = 10_000;
@@ -194,8 +194,8 @@ const getAccess = async (documentName: string, userId: string) => {
 
 export const collaborationServer = new Hocuspocus<CollaborationContext>({
   name: "thyncspace-collaboration",
-  debounce: 1200,
-  maxDebounce: 5000,
+  debounce: 2500,
+  maxDebounce: 10000,
   async onAuthenticate({ documentName, token, connectionConfig }) {
     const payload = verifyCollaborationToken(token);
     if (payload.noteId !== documentName) throw new Error("Token note mismatch");
@@ -468,7 +468,28 @@ export const attachCollaborationServer = (server: HttpServer) => {
         `https://thyncspace-api.invalid${request.url ?? "/collaboration"}`,
         { headers },
       );
-      collaborationServer.handleConnection(websocket, webRequest);
+      const clientConnection = collaborationServer.handleConnection(
+        websocket,
+        webRequest,
+      );
+
+      websocket.on("message", (data) => {
+        const message = data instanceof ArrayBuffer
+          ? new Uint8Array(data)
+          : Array.isArray(data)
+            ? Buffer.concat(data)
+            : data;
+        clientConnection.handleMessage(message);
+      });
+      websocket.on("close", (code, reason) => {
+        clientConnection.handleClose({
+          code,
+          reason: reason.toString("utf8"),
+        });
+      });
+      websocket.on("error", (error) => {
+        console.error("Collaboration WebSocket error", error);
+      });
     });
   });
 

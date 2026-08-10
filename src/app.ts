@@ -86,6 +86,7 @@ app.use(
       mongoUrl: env.MONGO_CONN,
       dbName: env.MONGO_DB_NAME,
       ttl: SESSION_MAX_AGE_MS / 1000,
+      touchAfter: 24 * 60 * 60,
       autoRemove: "native",
     }),
   }),

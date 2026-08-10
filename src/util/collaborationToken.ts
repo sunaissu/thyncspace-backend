@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import env from "./validateEnv.js";
 
-const TOKEN_LIFETIME_MS = 5 * 60 * 1000;
+const TOKEN_LIFETIME_MS = 30 * 60 * 1000;
 
 export interface CollaborationTokenPayload {
   expiresAt: number;
