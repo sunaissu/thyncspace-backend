@@ -1,5 +1,5 @@
 import { InferSchemaType, model, Schema } from 'mongoose'
-import { DefaultView, Theme } from '../types/_enums'
+import { DefaultView, Theme } from '../types/_enums.js'
 
 const userSettingsSchema = new Schema(
   {

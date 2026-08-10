@@ -1,10 +1,10 @@
 import passport from "passport";
 import express from 'express'
-import * as AuthController from '../controller/auth.controller'
-import env from "../util/validateEnv";
-import { requireAuth } from "../util/auth";
+import * as AuthController from '../controller/auth.controller.js'
+import env from "../util/validateEnv.js";
+import { requireAuth } from "../util/auth.js";
 import rateLimit from "express-rate-limit";
-import { issueCsrfToken } from "../util/csrf";
+import { issueCsrfToken } from "../util/csrf.js";
 
 const router = express.Router()
 

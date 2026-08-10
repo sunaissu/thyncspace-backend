@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
-import * as authService from "../services/auth.service";
-import env from "../util/validateEnv";
-import { SESSION_COOKIE_NAME } from "../util/session";
+import * as authService from "../services/auth.service.js";
+import env from "../util/validateEnv.js";
+import { SESSION_COOKIE_NAME } from "../util/session.js";
 
 const userResponse = (user: {
   _id: { toString(): string };

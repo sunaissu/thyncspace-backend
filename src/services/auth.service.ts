@@ -1,16 +1,16 @@
 import bcrypt from "bcrypt";
 import mongoose from "mongoose";
 import createHttpError from "http-errors";
-import * as userRepository from "../repositories/user.repository";
-import * as userAuthRepository from "../repositories/userAuth.repository";
+import * as userRepository from "../repositories/user.repository.js";
+import * as userAuthRepository from "../repositories/userAuth.repository.js";
 import {
   normalizeUsername,
   validateEmail,
   validateLoginPassword,
   validateRegistrationPassword,
   validateUsername,
-} from "../util/validation";
-import { AuthProvider } from "../types/_enums";
+} from "../util/validation.js";
+import { AuthProvider } from "../types/_enums.js";
 
 interface SignupData {
   username?: string;

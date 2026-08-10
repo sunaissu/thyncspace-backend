@@ -1,6 +1,6 @@
 import createHttpError from 'http-errors'
-import * as userRepository from '../repositories/user.repository'
-import { validateUsername } from '../util/validation'
+import * as userRepository from '../repositories/user.repository.js'
+import { validateUsername } from '../util/validation.js'
 
 export const getUserProfile = async (userId: string) => {
   const user = await userRepository.findUserById(userId)

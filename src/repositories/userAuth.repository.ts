@@ -1,5 +1,5 @@
 import { ClientSession, Types } from 'mongoose'
-import UserAuth from '../models/userAuth.model'
+import UserAuth from '../models/userAuth.model.js'
 
 export const createUserAuth = async (
     authData: {

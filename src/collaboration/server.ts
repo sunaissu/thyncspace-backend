@@ -3,15 +3,15 @@ import type { Server as HttpServer } from "http";
 import mongoose from "mongoose";
 import { WebSocketServer } from "ws";
 import * as Y from "yjs";
-import NoteModel from "../models/note.model";
-import UserModel from "../models/user.model";
-import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums";
-import { verifyCollaborationToken } from "../util/collaborationToken";
-import env from "../util/validateEnv";
+import NoteModel from "../models/note.model.js";
+import UserModel from "../models/user.model.js";
+import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums.js";
+import { verifyCollaborationToken } from "../util/collaborationToken.js";
+import env from "../util/validateEnv.js";
 import {
   MAX_NOTE_CONTENT_BYTES,
   validateNoteTitle,
-} from "../util/validation";
+} from "../util/validation.js";
 
 interface CollaborationContext {
   expiresAt: number;

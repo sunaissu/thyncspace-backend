@@ -1,5 +1,5 @@
 import { InferSchemaType, model, Schema } from "mongoose";
-import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums";
+import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums.js";
 
 const noteSchema = new Schema(
   {

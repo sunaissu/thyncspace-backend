@@ -1,7 +1,7 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
-import * as NoteController from "../controller/notes";
-import { requireAuth } from "../util/auth";
+import * as NoteController from "../controller/notes.js";
+import { requireAuth } from "../util/auth.js";
 
 const router = express.Router();
 

@@ -1,5 +1,5 @@
 import createHttpError from "http-errors";
-import { NoteType } from "../types/_enums";
+import { NoteType } from "../types/_enums.js";
 
 export const MAX_NOTE_TITLE_LENGTH = 200;
 export const MAX_NOTE_CONTENT_BYTES = 1024 * 1024;

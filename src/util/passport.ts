@@ -1,8 +1,8 @@
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-import env from "./validateEnv";
-import * as authService from "../services/auth.service";
-import * as userRepository from "../repositories/user.repository";
+import env from "./validateEnv.js";
+import * as authService from "../services/auth.service.js";
+import * as userRepository from "../repositories/user.repository.js";
 
 passport.use(
   new GoogleStrategy(

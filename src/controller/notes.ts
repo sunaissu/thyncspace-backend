@@ -1,18 +1,18 @@
 import type { Request, RequestHandler } from "express";
 import createHttpError from "http-errors";
 import mongoose from "mongoose";
-import NoteModel from "../models/note.model";
-import UserModel from "../models/user.model";
-import * as NoteRepository from "../repositories/note.repository";
-import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums";
-import { createCollaborationToken } from "../util/collaborationToken";
-import { toNoteResponse } from "../util/noteResponse";
+import NoteModel from "../models/note.model.js";
+import UserModel from "../models/user.model.js";
+import * as NoteRepository from "../repositories/note.repository.js";
+import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums.js";
+import { createCollaborationToken } from "../util/collaborationToken.js";
+import { toNoteResponse } from "../util/noteResponse.js";
 import {
   disconnectCollaborator,
   disconnectNote,
   updateCollaboratorPermission,
   updateNoteState,
-} from "../collaboration/server";
+} from "../collaboration/server.js";
 import {
   MAX_IMPORT_CONTENT_BYTES,
   MAX_IMPORT_NOTES,
@@ -20,7 +20,7 @@ import {
   validateNoteTitle,
   validateNoteType,
   validateShareIdentifier,
-} from "../util/validation";
+} from "../util/validation.js";
 
 const requireValidNoteId = (noteId: string) => {
   if (!mongoose.isValidObjectId(noteId)) {

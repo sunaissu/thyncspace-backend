@@ -1,6 +1,6 @@
 import { ClientSession } from "mongoose";
-import User from "../models/user.model";
-import { normalizeEmail, normalizeUsername } from "../util/validation";
+import User from "../models/user.model.js";
+import { normalizeEmail, normalizeUsername } from "../util/validation.js";
 
 export const findUserById = async (userId: string) => {
   return User.findById(userId).select("+email");

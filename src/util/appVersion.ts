@@ -1,11 +1,10 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
 
 type PackageMetadata = {
   version?: unknown;
 };
 
-const packagePath = path.resolve(__dirname, "..", "..", "package.json");
+const packagePath = new URL("../../package.json", import.meta.url);
 const packageMetadata = JSON.parse(
   readFileSync(packagePath, "utf8"),
 ) as PackageMetadata;

@@ -1,5 +1,5 @@
 import { InferSchemaType, model, Schema } from 'mongoose'
-import { AuthProvider } from '../types/_enums'
+import { AuthProvider } from '../types/_enums.js'
 
 const userAuthSchema = new Schema(
   {

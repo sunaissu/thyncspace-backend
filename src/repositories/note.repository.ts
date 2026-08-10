@@ -1,5 +1,5 @@
-import Notes from "../models/note.model";
-import { NoteStatus } from "../types/_enums";
+import Notes from "../models/note.model.js";
+import { NoteStatus } from "../types/_enums.js";
 import mongoose from "mongoose";
 
 export const findNotesByOwner = async (userId: string) => {

@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "crypto";
 import type { RequestHandler } from "express";
 import createHttpError from "http-errors";
-import env from "./validateEnv";
+import env from "./validateEnv.js";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const CLIENT_ORIGIN = new URL(env.CLIENT_URL).origin;

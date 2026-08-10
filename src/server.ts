@@ -1,8 +1,8 @@
 import { createServer } from "http";
 import mongoose from "mongoose";
-import app from "./app";
-import { attachCollaborationServer } from "./collaboration/server";
-import env from "./util/validateEnv";
+import app from "./app.js";
+import { attachCollaborationServer } from "./collaboration/server.js";
+import env from "./util/validateEnv.js";
 
 const server = createServer(app);
 server.requestTimeout = 30_000;

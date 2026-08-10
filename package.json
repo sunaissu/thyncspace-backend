@@ -3,6 +3,7 @@
   "version": "2.0.0",
   "description": "Private API and collaboration service for ThyncSpace.",
   "private": true,
+  "type": "module",
   "main": "dist/server.js",
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",

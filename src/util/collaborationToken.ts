@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import env from "./validateEnv";
+import env from "./validateEnv.js";
 
 const TOKEN_LIFETIME_MS = 5 * 60 * 1000;
 

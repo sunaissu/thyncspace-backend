@@ -1,5 +1,5 @@
 import { cleanEnv } from "envalid";
-import { port, str } from "envalid/dist/validators";
+import { port, str } from "envalid/dist/validators.js";
 
 const env = cleanEnv(process.env, {
   MONGO_CONN: str(),

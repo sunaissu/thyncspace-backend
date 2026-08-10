@@ -1,5 +1,5 @@
 import { Request, Response } from 'express'
-import * as userService from '../services/user.service'
+import * as userService from '../services/user.service.js'
 
 const userResponse = (user: {
   _id: { toString(): string };
