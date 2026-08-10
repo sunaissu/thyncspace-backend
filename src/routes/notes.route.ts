@@ -41,6 +41,7 @@ router.get("/favorites", NoteController.getFavoriteNotes);
 router.post("/", creationLimiter, NoteController.createNote);
 router.post("/import", creationLimiter, NoteController.importNotes);
 router.get("/:noteId", NoteController.getNote);
+router.patch("/:noteId/private", NoteController.updatePrivateNote);
 router.patch("/:noteId", NoteController.updateNote);
 router.patch("/:noteId/favorite", NoteController.toggleFavorite);
 router.post(

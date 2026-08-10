@@ -17,6 +17,7 @@ interface CollaborationContext {
   expiresAt: number;
   lastAccessCheck: number;
   permission: PermissionLevel;
+  privateOnly?: boolean;
   userId: string;
   username: string;
 }
@@ -106,6 +107,41 @@ const seedDocument = (
   const viewport = document.getMap<number>(VIEWPORT_KEY);
   Object.entries(board.viewport ?? {}).forEach(([key, value]) => {
     if (typeof value === "number" && Number.isFinite(value)) viewport.set(key, value);
+  });
+};
+
+const replaceText = (text: Y.Text, value: string) => {
+  if (text.toString() === value) return;
+  if (text.length) text.delete(0, text.length);
+  if (value) text.insert(0, value);
+};
+
+const replaceBoard = (document: Y.Doc, content: string) => {
+  const board = parseBoard(content);
+  const elementStore = document.getMap<Y.Map<unknown>>(ELEMENTS_KEY);
+  const orderStore = document.getArray<string>(ORDER_KEY);
+  const viewportStore = document.getMap<number>(VIEWPORT_KEY);
+
+  elementStore.clear();
+  if (orderStore.length) orderStore.delete(0, orderStore.length);
+  viewportStore.clear();
+
+  board.elements.forEach((element) => {
+    if (typeof element.id !== "string") return;
+    const value = new Y.Map<unknown>();
+    Object.entries(element).forEach(([key, field]) => {
+      if (field !== undefined) value.set(key, field);
+    });
+    elementStore.set(element.id, value);
+  });
+  const order = board.elements
+    .map((element) => element.id)
+    .filter((id): id is string => typeof id === "string");
+  if (order.length) orderStore.insert(0, order);
+  Object.entries(board.viewport).forEach(([key, value]) => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      viewportStore.set(key, value);
+    }
   });
 };
 
@@ -225,11 +261,16 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
     }
     return document;
   },
-  async onStoreDocument({ documentName, document }) {
-    const note = await NoteModel.findOne({
+  async onStoreDocument({ documentName, document, lastContext }) {
+    const privateOnly = lastContext?.privateOnly === true;
+    const noteFilter = {
       _id: documentName,
       status: NoteStatus.Active,
-    })
+      ...(privateOnly
+        ? { owner: lastContext.userId, "sharedWith.0": { $exists: false } }
+        : {}),
+    };
+    const note = await NoteModel.findOne(noteFilter)
       .select("title type")
       .exec();
     if (!note) return;
@@ -246,11 +287,43 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
     const sharedTitle = document.getText(TITLE_KEY).toString();
     const title = sharedTitle ? validateNoteTitle(sharedTitle) : note.title;
     await NoteModel.updateOne(
-      { _id: documentName, status: NoteStatus.Active },
+      noteFilter,
       { collaborationState: encodedState, content, title },
     ).exec();
   },
 });
+
+export const updateNoteState = async (
+  noteId: string,
+  ownerId: string,
+  type: NoteType,
+  changes: { content?: string; title?: string },
+  privateOnly: boolean,
+) => {
+  const connection = await collaborationServer.openDirectConnection(noteId, {
+    expiresAt: Number.MAX_SAFE_INTEGER,
+    lastAccessCheck: Date.now(),
+    permission: PermissionLevel.Editor,
+    privateOnly,
+    userId: ownerId,
+    username: "Private owner",
+  });
+  try {
+    await connection.transact((document) => {
+      if (changes.title !== undefined) {
+        replaceText(document.getText(TITLE_KEY), changes.title);
+      }
+      if (changes.content === undefined) return;
+      if (type === NoteType.Document) {
+        replaceText(document.getText(TEXT_KEY), changes.content);
+      } else {
+        replaceBoard(document, changes.content);
+      }
+    });
+  } finally {
+    await connection.disconnect();
+  }
+};
 
 export const updateCollaboratorPermission = (
   noteId: string,
