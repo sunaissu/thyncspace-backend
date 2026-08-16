@@ -7,6 +7,7 @@ import NoteModel from "../models/note.model.js";
 import UserModel from "../models/user.model.js";
 import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums.js";
 import { verifyCollaborationToken } from "../util/collaborationToken.js";
+import { invalidateOwnedNotesCache } from "../util/cache.js";
 import env from "../util/validateEnv.js";
 import {
   MAX_NOTE_CONTENT_BYTES,
@@ -271,7 +272,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
         : {}),
     };
     const note = await NoteModel.findOne(noteFilter)
-      .select("title type")
+      .select("owner title type")
       .exec();
     if (!note) return;
     const encodedState = Buffer.from(Y.encodeStateAsUpdate(document));
@@ -290,6 +291,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
       noteFilter,
       { collaborationState: encodedState, content, title },
     ).exec();
+    await invalidateOwnedNotesCache(note.owner.toString());
   },
 });
 

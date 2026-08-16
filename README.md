@@ -12,6 +12,7 @@ This directory is intended to become the standalone private GitHub repository
 - Node.js 24
 - npm
 - MongoDB replica set or Atlas deployment
+- Redis 8 (optional; the backend falls back to MongoDB when it is unavailable)
 
 Transactions are used by application flows, so a standalone MongoDB server is
 not sufficient. `docker-compose.yaml` starts a single-member replica set for
@@ -34,6 +35,12 @@ docker compose up -d
 Copy `.env.example` to `.env`, replace every placeholder, and keep `.env`
 untracked. For local development, use localhost origins and a local database
 name rather than production credentials.
+
+Set `REDIS_URL=redis://127.0.0.1:6379` to enable the local cache started by
+Docker Compose. Leave it empty to disable caching. Cached note lists expire
+after `REDIS_CACHE_TTL_SECONDS` and are explicitly invalidated after note,
+sharing, favorite, and collaboration changes. Redis is never authoritative for
+note content.
 
 Build and start:
 

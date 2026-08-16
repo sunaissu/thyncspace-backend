@@ -1,5 +1,5 @@
 import { cleanEnv } from "envalid";
-import { port, str } from "envalid/dist/validators.js";
+import { num, port, str } from "envalid/dist/validators.js";
 
 const env = cleanEnv(process.env, {
   MONGO_CONN: str(),
@@ -8,6 +8,8 @@ const env = cleanEnv(process.env, {
     default: "aws-iam",
   }),
   MONGO_DB_NAME: str(),
+  REDIS_URL: str({ default: "" }),
+  REDIS_CACHE_TTL_SECONDS: num({ default: 30 }),
   PORT: port({ default: 5000 }),
   HOST: str({ default: "127.0.0.1" }),
   SESSION_SECRET: str(),
@@ -71,6 +73,38 @@ for (const [name, value] of [
 
 if (!/^[a-zA-Z0-9_-]{1,63}$/.test(env.MONGO_DB_NAME)) {
   throw new Error("MONGO_DB_NAME contains unsupported characters");
+}
+
+if (
+  env.REDIS_CACHE_TTL_SECONDS < 5 ||
+  env.REDIS_CACHE_TTL_SECONDS > 300
+) {
+  throw new Error("REDIS_CACHE_TTL_SECONDS must be between 5 and 300");
+}
+
+if (env.REDIS_URL) {
+  try {
+    const redisUrl = new URL(env.REDIS_URL);
+    if (!["redis:", "rediss:"].includes(redisUrl.protocol)) {
+      throw new Error("unsupported protocol");
+    }
+    const isLocalhost = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(
+      redisUrl.hostname,
+    );
+    if (
+      env.ENVIRONMENT === "production" &&
+      redisUrl.protocol !== "rediss:" &&
+      !isLocalhost
+    ) {
+      throw new Error("TLS is required for remote production Redis");
+    }
+  } catch (error) {
+    throw new Error(
+      error instanceof Error && error.message.includes("TLS")
+        ? error.message
+        : "REDIS_URL must be a valid redis:// or rediss:// URL",
+    );
+  }
 }
 
 if (env.ENVIRONMENT === "production") {

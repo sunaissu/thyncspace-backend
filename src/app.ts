@@ -16,6 +16,7 @@ import env from "./util/validateEnv.js";
 import { APP_VERSION } from "./util/appVersion.js";
 import { requireCsrfProtection } from "./util/csrf.js";
 import { SESSION_COOKIE_NAME } from "./util/session.js";
+import { getCacheStatus } from "./util/cache.js";
 import "./util/passport.js";
 
 const app = express();
@@ -58,14 +59,22 @@ app.use("/api", apiLimiter);
 
 app.get("/healthz", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  res.status(200).json({ status: "ok", version: APP_VERSION });
+  res.status(200).json({
+    status: "ok",
+    version: APP_VERSION,
+    cache: getCacheStatus(),
+  });
 });
 app.get("/readyz", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   if (mongoose.connection.readyState !== 1) {
     return res.status(503).json({ status: "not-ready", version: APP_VERSION });
   }
-  return res.status(200).json({ status: "ready", version: APP_VERSION });
+  return res.status(200).json({
+    status: "ready",
+    version: APP_VERSION,
+    cache: getCacheStatus(),
+  });
 });
 
 app.use(

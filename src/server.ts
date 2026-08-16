@@ -2,6 +2,7 @@ import { createServer } from "http";
 import mongoose from "mongoose";
 import app from "./app.js";
 import { attachCollaborationServer } from "./collaboration/server.js";
+import { connectCache, disconnectCache } from "./util/cache.js";
 import env from "./util/validateEnv.js";
 
 const server = createServer(app);
@@ -24,6 +25,7 @@ const shutdown = async (signal: string) => {
 
   server.close(async (error) => {
     try {
+      disconnectCache();
       await mongoose.disconnect();
     } finally {
       clearTimeout(forceExit);
@@ -43,6 +45,7 @@ mongoose
     serverSelectionTimeoutMS: 10_000,
   })
   .then(() => {
+    void connectCache();
     server.listen(env.PORT, env.HOST, () => {
       console.log(`Server listening on ${env.HOST}:${env.PORT}`);
     });

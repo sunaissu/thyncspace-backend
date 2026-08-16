@@ -3,6 +3,13 @@ import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import env from "./validateEnv.js";
 import * as authService from "../services/auth.service.js";
 import * as userRepository from "../repositories/user.repository.js";
+import { cacheKeys, readThroughCachedJson } from "./cache.js";
+
+interface SessionUser {
+  email: string;
+  id: string;
+  username: string;
+}
 
 passport.use(
   new GoogleStrategy(
@@ -34,13 +41,22 @@ passport.serializeUser((user, callback) => {
 
 passport.deserializeUser(async (userId: string, callback) => {
   try {
-    const user = await userRepository.findUserById(String(userId));
+    const normalizedUserId = String(userId);
+    const user = await readThroughCachedJson<SessionUser | null>(
+      cacheKeys.sessionUser(normalizedUserId),
+      async () => {
+        const storedUser = await userRepository.findUserById(normalizedUserId);
+        return storedUser
+          ? {
+              email: storedUser.email,
+              id: storedUser.id,
+              username: storedUser.username,
+            }
+          : null;
+      },
+    );
     if (!user) return callback(null, false);
-    return callback(null, {
-      email: user.email,
-      id: user.id,
-      username: user.username,
-    });
+    return callback(null, user);
   } catch (error) {
     return callback(error);
   }

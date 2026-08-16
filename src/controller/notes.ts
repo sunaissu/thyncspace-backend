@@ -6,6 +6,11 @@ import UserModel from "../models/user.model.js";
 import * as NoteRepository from "../repositories/note.repository.js";
 import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums.js";
 import { createCollaborationToken } from "../util/collaborationToken.js";
+import {
+  cacheKeys,
+  invalidateOwnedNotesCache,
+  readThroughCachedJson,
+} from "../util/cache.js";
 import { toNoteResponse } from "../util/noteResponse.js";
 import {
   disconnectCollaborator,
@@ -73,8 +78,14 @@ const withNoteMutationLock = async <Result>(
 export const getNotes: RequestHandler = async (req, res, next) => {
   try {
     const userId = getUserId(req);
-    const notes = await NoteRepository.findNotesByOwner(userId);
-    res.status(200).json(notes.map((note) => toNoteResponse(note, userId)));
+    const notes = await readThroughCachedJson(
+      cacheKeys.ownedNotes(userId),
+      async () => {
+        const storedNotes = await NoteRepository.findNotesByOwner(userId);
+        return storedNotes.map((note) => toNoteResponse(note, userId));
+      },
+    );
+    res.status(200).json(notes);
   } catch (error) {
     next(error);
   }
@@ -135,6 +146,7 @@ export const createNote: RequestHandler = async (req, res, next) => {
       type,
       owner: userId,
     });
+    await invalidateOwnedNotesCache(userId);
     res.status(201).json(toNoteResponse(newNote, userId));
   } catch (error) {
     next(error);
@@ -176,6 +188,7 @@ export const importNotes: RequestHandler = async (req, res, next) => {
         NoteModel.insertMany(notesToCreate, { session }),
       );
       if (!createdNotes) throw new Error("Import transaction did not complete");
+      await invalidateOwnedNotesCache(userId);
       res
         .status(201)
         .json(
@@ -206,8 +219,8 @@ export const updateNote: RequestHandler = async (req, res, next) => {
     const changes: { content?: string; title?: string } = {};
     if (title !== undefined) changes.title = title;
     if (content !== undefined) changes.content = content;
-    const updatedNote = await NoteModel.findOneAndUpdate(
-      {
+    await withNoteMutationLock(noteId, async () => {
+      const editableNote = await NoteModel.findOne({
         _id: noteId,
         status: NoteStatus.Active,
         $or: [
@@ -221,23 +234,40 @@ export const updateNote: RequestHandler = async (req, res, next) => {
             },
           },
         ],
-      },
-      { $set: changes },
-      { new: true, runValidators: true },
-    ).exec();
-    if (!updatedNote) {
-      const noteExists = await NoteModel.exists({
+      })
+        .select("type")
+        .exec();
+      if (!editableNote) {
+        const noteExists = await NoteModel.exists({
+          _id: noteId,
+          status: NoteStatus.Active,
+        });
+        throw createHttpError(
+          noteExists ? 403 : 404,
+          noteExists
+            ? "You do not have permission to edit this note"
+            : "Note not found",
+        );
+      }
+
+      // The Yjs document is authoritative for every shared note. Updating only
+      // the materialized MongoDB fields leaves the live document stale, and its
+      // next autosave can overwrite this change with the older value.
+      await updateNoteState(
+        noteId,
+        userId,
+        editableNote.type as NoteType,
+        changes,
+        false,
+      );
+
+      const updatedNote = await NoteModel.findOne({
         _id: noteId,
         status: NoteStatus.Active,
-      });
-      throw createHttpError(
-        noteExists ? 403 : 404,
-        noteExists
-          ? "You do not have permission to edit this note"
-          : "Note not found",
-      );
-    }
-    res.status(200).json(toNoteResponse(updatedNote, userId));
+      }).exec();
+      if (!updatedNote) throw createHttpError(404, "Note not found");
+      res.status(200).json(toNoteResponse(updatedNote, userId));
+    });
   } catch (error) {
     next(error);
   }
@@ -317,6 +347,7 @@ export const deleteNote: RequestHandler = async (req, res, next) => {
 
     disconnectNote(noteId);
     await note.deleteOne();
+    await invalidateOwnedNotesCache(note.owner.toString());
     res.sendStatus(204);
   } catch (error) {
     next(error);
@@ -345,6 +376,7 @@ export const toggleFavorite: RequestHandler = async (req, res, next) => {
 
     const updatedNote = await NoteRepository.toggleFavorite(noteId, userId);
     if (!updatedNote) throw createHttpError(404, "Note not found");
+    await invalidateOwnedNotesCache(updatedNote.owner.toString());
     res.status(200).json(toNoteResponse(updatedNote, userId));
   } catch (error) {
     next(error);
@@ -450,6 +482,7 @@ export const shareNote: RequestHandler = async (req, res, next) => {
         if (existing) existing.permission = permission;
         else note.sharedWith.push({ userId: collaborator._id, permission });
         await note.save();
+        await invalidateOwnedNotesCache(ownerId);
 
         if (isFirstShare && snapshotContent !== undefined) {
           try {
@@ -467,6 +500,7 @@ export const shareNote: RequestHandler = async (req, res, next) => {
               { _id: noteId, owner: ownerId, status: NoteStatus.Active },
               { $pull: { sharedWith: { userId: collaborator._id } } },
             ).exec();
+            await invalidateOwnedNotesCache(ownerId);
             disconnectCollaborator(noteId, collaborator.id);
             throw promotionError;
           }
@@ -502,6 +536,7 @@ export const unshareNote: RequestHandler = async (req, res, next) => {
       throw createHttpError(404, "Collaborator not found");
     }
     await note.save();
+    await invalidateOwnedNotesCache(note.owner.toString());
     disconnectCollaborator(noteId, collaboratorId);
     res.sendStatus(204);
   } catch (error) {
