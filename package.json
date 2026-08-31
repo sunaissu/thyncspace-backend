@@ -7,9 +7,12 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
+    "check": "npm run lint && npm run typecheck && npm test",
     "start": "node dist/server.js",
     "lint": "eslint . --ext .ts",
-    "serve": "concurrently \"tsc --watch\" \"nodemon dist/server.js\""
+    "serve": "concurrently \"tsc --watch\" \"nodemon dist/server.js\"",
+    "test": "npm run build && node --test",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -53,7 +56,6 @@
     "concurrently": "^8.2.0",
     "eslint": "^8.42.0",
     "nodemon": "^3.1.14",
-    "ts-node": "^10.9.1",
     "typescript": "^5.1.3"
   }
 }

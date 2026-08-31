@@ -1,7 +1,10 @@
 import { createServer } from "http";
 import mongoose from "mongoose";
 import app from "./app.js";
-import { attachCollaborationServer } from "./collaboration/server.js";
+import {
+  attachCollaborationServer,
+  shutdownCollaborationServer,
+} from "./collaboration/server.js";
 import { connectCache, disconnectCache } from "./util/cache.js";
 import env from "./util/validateEnv.js";
 
@@ -23,15 +26,26 @@ const shutdown = async (signal: string) => {
   }, 15_000);
   forceExit.unref();
 
-  server.close(async (error) => {
-    try {
-      disconnectCache();
-      await mongoose.disconnect();
-    } finally {
-      clearTimeout(forceExit);
-      process.exit(error ? 1 : 0);
-    }
+  let closeError: Error | undefined;
+  const httpClosed = new Promise<void>((resolve) => {
+    server.close((error) => {
+      closeError = error;
+      resolve();
+    });
   });
+
+  try {
+    await shutdownCollaborationServer();
+    await httpClosed;
+    disconnectCache();
+    await mongoose.disconnect();
+  } catch (error) {
+    closeError = error instanceof Error ? error : new Error(String(error));
+    console.error("Graceful shutdown failed", error);
+  } finally {
+    clearTimeout(forceExit);
+    process.exit(closeError ? 1 : 0);
+  }
 };
 
 process.once("SIGTERM", () => void shutdown("SIGTERM"));

@@ -21,7 +21,9 @@ import {
 import {
   MAX_IMPORT_CONTENT_BYTES,
   MAX_IMPORT_NOTES,
+  getShareIdentifierLookupQueries,
   validateNoteContent,
+  validateNoteContentForType,
   validateNoteTitle,
   validateNoteType,
   validateShareIdentifier,
@@ -137,8 +139,8 @@ export const getNote: RequestHandler = async (req, res, next) => {
 export const createNote: RequestHandler = async (req, res, next) => {
   try {
     const title = validateNoteTitle(req.body?.title);
-    const content = validateNoteContent(req.body?.text);
     const type = validateNoteType(req.body?.type);
+    const content = validateNoteContentForType(req.body?.text, type);
     const userId = getUserId(req);
     const newNote = await NoteModel.create({
       title,
@@ -169,7 +171,7 @@ export const importNotes: RequestHandler = async (req, res, next) => {
         throw createHttpError(400, "Every imported note must be an object");
       }
       const candidate = input as Record<string, unknown>;
-      const content = validateNoteContent(candidate.text) ?? "";
+      const content = validateNoteContentForType(candidate.text, NoteType.Document) ?? "";
       totalContentBytes += Buffer.byteLength(content, "utf8");
       return {
         owner: userId,
@@ -250,6 +252,10 @@ export const updateNote: RequestHandler = async (req, res, next) => {
         );
       }
 
+      if (content !== undefined && editableNote.type === NoteType.Whiteboard) {
+        validateNoteContentForType(content, NoteType.Whiteboard);
+      }
+
       // The Yjs document is authoritative for every shared note. Updating only
       // the materialized MongoDB fields leaves the live document stale, and its
       // next autosave can overwrite this change with the older value.
@@ -307,6 +313,10 @@ export const updatePrivateNote: RequestHandler = async (req, res, next) => {
         );
       }
 
+      if (content !== undefined && note.type === NoteType.Whiteboard) {
+        validateNoteContentForType(content, NoteType.Whiteboard);
+      }
+
       await updateNoteState(
         noteId,
         userId,
@@ -336,18 +346,21 @@ export const deleteNote: RequestHandler = async (req, res, next) => {
   const noteId = req.params.noteId as string;
   try {
     requireValidNoteId(noteId);
-    const note = await NoteModel.findOne({
-      _id: noteId,
-      status: NoteStatus.Active,
-    }).exec();
-    if (!note) throw createHttpError(404, "Note not found");
-    if (note.owner.toString() !== getUserId(req)) {
-      throw createHttpError(403, "Only the owner can delete this note");
-    }
+    const userId = getUserId(req);
+    await withNoteMutationLock(noteId, async () => {
+      const note = await NoteModel.findOne({
+        _id: noteId,
+        status: NoteStatus.Active,
+      }).exec();
+      if (!note) throw createHttpError(404, "Note not found");
+      if (note.owner.toString() !== userId) {
+        throw createHttpError(403, "Only the owner can delete this note");
+      }
 
-    disconnectNote(noteId);
-    await note.deleteOne();
-    await invalidateOwnedNotesCache(note.owner.toString());
+      disconnectNote(noteId);
+      await note.deleteOne();
+      await invalidateOwnedNotesCache(note.owner.toString());
+    });
     res.sendStatus(204);
   } catch (error) {
     next(error);
@@ -447,14 +460,17 @@ export const shareNote: RequestHandler = async (req, res, next) => {
       throw createHttpError(400, "Permission must be viewer or editor");
     }
 
-    const collaborator = await UserModel.findOne({
-      $or: [{ username: identifier }, { email: identifier.toLowerCase() }],
-    })
-      .collation({ locale: "en", strength: 2 })
-      .select("username +email")
-      .exec();
+    let collaborator: InstanceType<typeof UserModel> | null = null;
+    for (const query of getShareIdentifierLookupQueries(identifier)) {
+      collaborator = await UserModel.findOne(query)
+        .collation({ locale: "en", strength: 2 })
+        .select("username +email")
+        .exec();
+      if (collaborator) break;
+    }
     if (!collaborator) throw createHttpError(404, "User not found");
-    if (collaborator.id === ownerId) {
+    const resolvedCollaborator = collaborator;
+    if (resolvedCollaborator.id === ownerId) {
       throw createHttpError(400, "The owner already has full access");
     }
 
@@ -463,7 +479,7 @@ export const shareNote: RequestHandler = async (req, res, next) => {
       async () => {
         const note = await getOwnedNote(noteId, ownerId);
         const existing = note.sharedWith.find(
-          (entry) => entry.userId.toString() === collaborator.id,
+          (entry) => entry.userId.toString() === resolvedCollaborator.id,
         );
         const isFirstShare = !existing && note.sharedWith.length === 0;
         let snapshotContent: string | undefined;
@@ -473,15 +489,16 @@ export const shareNote: RequestHandler = async (req, res, next) => {
             throw createHttpError(400, "The note snapshot is invalid");
           }
           const snapshot = rawSnapshot as Record<string, unknown>;
-          snapshotContent = validateNoteContent(snapshot.text);
+          snapshotContent = validateNoteContentForType(snapshot.text, note.type as NoteType);
           if (snapshotContent === undefined) {
             throw createHttpError(400, "The note snapshot is missing its content");
           }
         }
 
         if (existing) existing.permission = permission;
-        else note.sharedWith.push({ userId: collaborator._id, permission });
+        else note.sharedWith.push({ userId: resolvedCollaborator._id, permission });
         await note.save();
+        updateCollaboratorPermission(noteId, resolvedCollaborator.id, permission);
         await invalidateOwnedNotesCache(ownerId);
 
         if (isFirstShare && snapshotContent !== undefined) {
@@ -498,23 +515,22 @@ export const shareNote: RequestHandler = async (req, res, next) => {
           } catch (promotionError) {
             await NoteModel.updateOne(
               { _id: noteId, owner: ownerId, status: NoteStatus.Active },
-              { $pull: { sharedWith: { userId: collaborator._id } } },
+              { $pull: { sharedWith: { userId: resolvedCollaborator._id } } },
             ).exec();
             await invalidateOwnedNotesCache(ownerId);
-            disconnectCollaborator(noteId, collaborator.id);
+            disconnectCollaborator(noteId, resolvedCollaborator.id);
             throw promotionError;
           }
         }
 
-        updateCollaboratorPermission(noteId, collaborator.id, permission);
         return Boolean(existing);
       },
     );
 
     res.status(collaboratorAlreadyExists ? 200 : 201).json({
-      userId: collaborator.id,
-      username: collaborator.username,
-      email: collaborator.email,
+      userId: resolvedCollaborator.id,
+      username: resolvedCollaborator.username,
+      email: resolvedCollaborator.email,
       permission,
     });
   } catch (error) {
@@ -527,17 +543,20 @@ export const unshareNote: RequestHandler = async (req, res, next) => {
   const collaboratorId = req.params.userId as string;
   try {
     requireValidNoteId(collaboratorId);
-    const note = await getOwnedNote(noteId, getUserId(req));
-    const previousLength = note.sharedWith.length;
-    note.sharedWith = note.sharedWith.filter(
-      (entry) => entry.userId.toString() !== collaboratorId,
-    );
-    if (note.sharedWith.length === previousLength) {
-      throw createHttpError(404, "Collaborator not found");
-    }
-    await note.save();
-    await invalidateOwnedNotesCache(note.owner.toString());
-    disconnectCollaborator(noteId, collaboratorId);
+    const ownerId = getUserId(req);
+    await withNoteMutationLock(noteId, async () => {
+      const note = await getOwnedNote(noteId, ownerId);
+      const previousLength = note.sharedWith.length;
+      note.sharedWith = note.sharedWith.filter(
+        (entry) => entry.userId.toString() !== collaboratorId,
+      );
+      if (note.sharedWith.length === previousLength) {
+        throw createHttpError(404, "Collaborator not found");
+      }
+      await note.save();
+      disconnectCollaborator(noteId, collaboratorId);
+      await invalidateOwnedNotesCache(note.owner.toString());
+    });
     res.sendStatus(204);
   } catch (error) {
     next(error);

@@ -8,6 +8,324 @@ export const MAX_IMPORT_CONTENT_BYTES = 4 * 1024 * 1024;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CONTROL_CHARACTER_PATTERN = /\p{Cc}/u;
+const MAX_ABSOLUTE_BOARD_COORDINATE = 1_000_000_000;
+const MAX_BOARD_ELEMENTS = 10_000;
+const MAX_ELEMENT_ID_LENGTH = 256;
+const MAX_ELEMENT_POINTS = 100_000;
+const MAX_ELEMENT_TEXT_LENGTH = 1_000_000;
+const MAX_IMAGE_DATA_URL_LENGTH = 8 * 1024 * 1024;
+const MAX_STYLE_STRING_LENGTH = 1024;
+const MAX_ELEMENT_SEED = 2_147_483_647;
+const FILL_STYLES = new Set(["solid", "hachure", "cross-hatch", "none"]);
+const STROKE_STYLES = new Set(["solid", "dashed", "dotted"]);
+const BLEND_MODES = new Set([
+  "normal",
+  "multiply",
+  "screen",
+  "overlay",
+  "darken",
+  "lighten",
+]);
+const CURVE_TYPES = new Set(["straight", "curve"]);
+const ROUTING_MODES = new Set(["straight", "curve", "orthogonal"]);
+const TEXT_ALIGNMENTS = new Set(["left", "center", "right"]);
+const FONT_WEIGHTS = new Set(["normal", "bold"]);
+const FONT_STYLES = new Set(["normal", "italic"]);
+const TEXT_DECORATIONS = new Set(["none", "underline", "line-through"]);
+const CALLOUT_DIRECTIONS = new Set([
+  "bottom-left",
+  "bottom-right",
+  "top-left",
+  "top-right",
+]);
+const ARROWHEADS = new Set(["arrow", "dot", "bar", "triangle"]);
+const NOTEBOARD_ELEMENT_TYPES = new Set([
+  "arrow",
+  "callout",
+  "diamond",
+  "draw",
+  "ellipse",
+  "frame",
+  "image",
+  "line",
+  "pen",
+  "rectangle",
+  "star",
+  "sticky-note",
+  "text",
+  "triangle",
+]);
+
+export interface WhiteboardContent {
+  elements: Array<Record<string, unknown>>;
+  viewport: {
+    panX: number;
+    panY: number;
+    zoom: number;
+  };
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isSafeCoordinate = (value: unknown) =>
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  Math.abs(value) <= MAX_ABSOLUTE_BOARD_COORDINATE;
+
+const isFinitePoint = (value: unknown) =>
+  isRecord(value) &&
+  isSafeCoordinate(value.x) &&
+  isSafeCoordinate(value.y) &&
+  (value.pressure === undefined ||
+    (typeof value.pressure === "number" &&
+      Number.isFinite(value.pressure) &&
+      value.pressure >= 0 &&
+      value.pressure <= 1));
+
+const isValidBinding = (value: unknown) =>
+  value === undefined ||
+  value === null ||
+  (isRecord(value) &&
+    typeof value.elementId === "string" &&
+    value.elementId.length > 0 &&
+    value.elementId.length <= MAX_ELEMENT_ID_LENGTH &&
+    isFinitePoint(value.fixedPoint));
+
+const hasValidOptionalNumber = (
+  value: Record<string, unknown>,
+  key: string,
+  minimum = -MAX_ABSOLUTE_BOARD_COORDINATE,
+  maximum = MAX_ABSOLUTE_BOARD_COORDINATE,
+) => {
+  const field = value[key];
+  return (
+    field === undefined ||
+    (typeof field === "number" &&
+      Number.isFinite(field) &&
+      field >= minimum &&
+      field <= maximum)
+  );
+};
+
+const hasValidOptionalString = (
+  value: Record<string, unknown>,
+  key: string,
+  allowNull = false,
+) => {
+  const field = value[key];
+  return (
+    field === undefined ||
+    (allowNull && field === null) ||
+    (typeof field === "string" && field.length <= MAX_STYLE_STRING_LENGTH)
+  );
+};
+
+const hasValidOptionalEnum = (
+  value: Record<string, unknown>,
+  key: string,
+  allowed: ReadonlySet<string>,
+  allowNull = false,
+) => {
+  const field = value[key];
+  return (
+    field === undefined ||
+    (allowNull && field === null) ||
+    (typeof field === "string" && allowed.has(field))
+  );
+};
+
+const isValidWhiteboardElement = (
+  value: unknown,
+): value is Record<string, unknown> => {
+  if (!isRecord(value)) return false;
+  if (
+    typeof value.id !== "string" ||
+    !value.id ||
+    value.id.length > MAX_ELEMENT_ID_LENGTH ||
+    typeof value.type !== "string" ||
+    !NOTEBOARD_ELEMENT_TYPES.has(value.type) ||
+    !isSafeCoordinate(value.x) ||
+    !isSafeCoordinate(value.y) ||
+    !isSafeCoordinate(value.width) ||
+    !isSafeCoordinate(value.height)
+  ) {
+    return false;
+  }
+
+  for (const key of ["angle", "baseline"]) {
+    if (!hasValidOptionalNumber(value, key)) return false;
+  }
+  if (
+    value.seed !== undefined &&
+    (!Number.isSafeInteger(value.seed) ||
+      (value.seed as number) < -MAX_ELEMENT_SEED ||
+      (value.seed as number) > MAX_ELEMENT_SEED)
+  ) {
+    return false;
+  }
+  if (!hasValidOptionalNumber(value, "opacity", 0, 100)) return false;
+  if (!hasValidOptionalNumber(value, "roughness", 0, 100)) return false;
+  if (!hasValidOptionalNumber(value, "borderRadius", 0)) return false;
+  if (!hasValidOptionalNumber(value, "strokeWidth", 0, 10_000)) return false;
+  if (!hasValidOptionalNumber(value, "fontSize", 0.01, 10_000)) return false;
+  if (!hasValidOptionalNumber(value, "labelFontSize", 0.01, 10_000)) return false;
+  if (!hasValidOptionalNumber(value, "lineHeight", 0.01, 1_000)) return false;
+  if (!hasValidOptionalNumber(value, "tension", 0, 1)) return false;
+  if (!hasValidOptionalNumber(value, "innerRadius", 0, 1)) return false;
+  if (
+    value.sides !== undefined &&
+    (!Number.isInteger(value.sides) || (value.sides as number) < 3 || (value.sides as number) > 12)
+  ) {
+    return false;
+  }
+  for (const key of ["highlighter", "isDeleted", "isStar", "locked", "showLabel"]) {
+    if (value[key] !== undefined && typeof value[key] !== "boolean") return false;
+  }
+  for (const key of [
+    "backgroundColor",
+    "fontFamily",
+    "frameColor",
+    "groupId",
+    "highlightColor",
+    "labelFontFamily",
+    "noteColor",
+    "strokeColor",
+  ]) {
+    if (!hasValidOptionalString(value, key)) return false;
+  }
+  if (!hasValidOptionalEnum(value, "fillStyle", FILL_STYLES)) return false;
+  if (!hasValidOptionalEnum(value, "strokeStyle", STROKE_STYLES)) return false;
+  if (!hasValidOptionalEnum(value, "blendMode", BLEND_MODES)) return false;
+  if (!hasValidOptionalEnum(value, "curveType", CURVE_TYPES)) return false;
+  if (!hasValidOptionalEnum(value, "routing", ROUTING_MODES)) return false;
+  if (!hasValidOptionalEnum(value, "textAlign", TEXT_ALIGNMENTS)) return false;
+  if (!hasValidOptionalEnum(value, "fontWeight", FONT_WEIGHTS)) return false;
+  if (!hasValidOptionalEnum(value, "fontStyle", FONT_STYLES)) return false;
+  if (!hasValidOptionalEnum(value, "textDecoration", TEXT_DECORATIONS)) return false;
+  if (!hasValidOptionalEnum(value, "tailDirection", CALLOUT_DIRECTIONS)) return false;
+  if (!hasValidOptionalEnum(value, "startArrowhead", ARROWHEADS, true)) return false;
+  if (!hasValidOptionalEnum(value, "endArrowhead", ARROWHEADS, true)) return false;
+  if (!isValidBinding(value.startBinding) || !isValidBinding(value.endBinding)) {
+    return false;
+  }
+
+  if (value.dropShadow !== undefined) {
+    if (!isRecord(value.dropShadow)) return false;
+    if (
+      !isSafeCoordinate(value.dropShadow.blur) ||
+      (value.dropShadow.blur as number) < 0 ||
+      !isSafeCoordinate(value.dropShadow.offsetX) ||
+      !isSafeCoordinate(value.dropShadow.offsetY) ||
+      (value.dropShadow.spread !== undefined &&
+        !isSafeCoordinate(value.dropShadow.spread)) ||
+      typeof value.dropShadow.color !== "string" ||
+      value.dropShadow.color.length > MAX_STYLE_STRING_LENGTH
+    ) {
+      return false;
+    }
+  }
+
+  if (value.childIds !== undefined) {
+    if (
+      !Array.isArray(value.childIds) ||
+      value.childIds.length > MAX_BOARD_ELEMENTS ||
+      !value.childIds.every(
+        (id) =>
+          typeof id === "string" && id.length > 0 && id.length <= MAX_ELEMENT_ID_LENGTH,
+      )
+    ) {
+      return false;
+    }
+  }
+
+  if (["line", "arrow", "draw", "pen"].includes(value.type)) {
+    if (
+      !Array.isArray(value.points) ||
+      value.points.length > MAX_ELEMENT_POINTS ||
+      !value.points.every(isFinitePoint)
+    ) {
+      return false;
+    }
+  }
+  if (
+    value.text !== undefined &&
+    (typeof value.text !== "string" || value.text.length > MAX_ELEMENT_TEXT_LENGTH)
+  ) {
+    return false;
+  }
+  if (value.type === "text" && typeof value.text !== "string") return false;
+  if (
+    value.label !== undefined &&
+    (typeof value.label !== "string" || value.label.length > MAX_ELEMENT_TEXT_LENGTH)
+  ) {
+    return false;
+  }
+  if (
+    value.type === "image" &&
+    (typeof value.dataUrl !== "string" ||
+      value.dataUrl.length > MAX_IMAGE_DATA_URL_LENGTH ||
+      !/^data:image\/[a-z0-9.+-]+;base64,/i.test(value.dataUrl))
+  ) {
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Parses the persisted Noteboard shape without throwing. The collaboration
+ * loader uses this tolerant form so a legacy malformed record can still open
+ * as an empty board instead of taking down the realtime connection.
+ */
+export const parseWhiteboardContent = (
+  content: unknown,
+): WhiteboardContent | undefined => {
+  if (content === "") {
+    return { elements: [], viewport: { panX: 0, panY: 0, zoom: 1 } };
+  }
+
+  let parsed = content;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed) as unknown;
+    } catch {
+      return undefined;
+    }
+  }
+  if (
+    !isRecord(parsed) ||
+    !Array.isArray(parsed.elements) ||
+    parsed.elements.length > MAX_BOARD_ELEMENTS
+  ) {
+    return undefined;
+  }
+  if (!isRecord(parsed.viewport)) return undefined;
+
+  const { panX, panY, zoom } = parsed.viewport;
+  if (!isSafeCoordinate(panX) || !isSafeCoordinate(panY) || !Number.isFinite(zoom)) {
+    return undefined;
+  }
+  if ((zoom as number) < 0.1 || (zoom as number) > 5) return undefined;
+
+  const seenIds = new Set<string>();
+  const elements: Array<Record<string, unknown>> = [];
+  for (const element of parsed.elements) {
+    if (!isValidWhiteboardElement(element) || seenIds.has(element.id as string)) {
+      return undefined;
+    }
+    seenIds.add(element.id as string);
+    elements.push(element);
+  }
+
+  return {
+    elements,
+    viewport: {
+      panX: panX as number,
+      panY: panY as number,
+      zoom: zoom as number,
+    },
+  };
+};
 
 export const normalizeEmail = (value: unknown) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -85,6 +403,18 @@ export const validateNoteContent = (value: unknown) => {
   return value;
 };
 
+export const validateNoteContentForType = (value: unknown, type: NoteType) => {
+  const content = validateNoteContent(value);
+  if (
+    content !== undefined &&
+    type === NoteType.Whiteboard &&
+    parseWhiteboardContent(content) === undefined
+  ) {
+    throw createHttpError(400, "Whiteboard content is invalid");
+  }
+  return content;
+};
+
 export const validateNoteType = (value: unknown) => {
   if (value === undefined) return NoteType.Document;
   if (!Object.values(NoteType).includes(value as NoteType)) {
@@ -102,4 +432,11 @@ export const validateShareIdentifier = (value: unknown) => {
     throw createHttpError(400, "Enter a valid username or email");
   }
   return identifier;
+};
+
+export const getShareIdentifierLookupQueries = (identifier: string) => {
+  const usernameQuery = { username: normalizeUsername(identifier) };
+  return identifier.includes("@")
+    ? [{ email: normalizeEmail(identifier) }, usernameQuery]
+    : [usernameQuery];
 };

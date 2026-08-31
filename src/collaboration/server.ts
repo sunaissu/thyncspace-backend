@@ -11,10 +11,17 @@ import { invalidateOwnedNotesCache } from "../util/cache.js";
 import env from "../util/validateEnv.js";
 import {
   MAX_NOTE_CONTENT_BYTES,
+  parseWhiteboardContent,
   validateNoteTitle,
 } from "../util/validation.js";
 
+interface DurableStoreAttempt {
+  error?: Error;
+  status: "failed" | "pending" | "succeeded";
+}
+
 interface CollaborationContext {
+  durableStoreAttempt?: DurableStoreAttempt;
   expiresAt: number;
   lastAccessCheck: number;
   permission: PermissionLevel;
@@ -35,6 +42,14 @@ const MAX_COLLABORATION_STATE_BYTES = 8 * 1024 * 1024;
 const MAX_UPGRADES_PER_MINUTE = 60;
 const MAX_TRACKED_UPGRADE_ADDRESSES = 10_000;
 
+// Hocuspocus deliberately catches errors from onStoreDocument so it can keep
+// the in-memory document alive. Keep the latest failed store per document as a
+// separate durability signal for shutdown; a later successful store clears it.
+const collaborationStoreFailures = new Map<string, Error>();
+
+const normalizeError = (error: unknown) =>
+  error instanceof Error ? error : new Error(String(error));
+
 interface UpgradeWindow {
   count: number;
   resetAt: number;
@@ -48,6 +63,12 @@ const emptyBoard = () => ({
 });
 
 const parseBoard = (content: unknown) => {
+  const validated = parseWhiteboardContent(content);
+  if (validated) return validated;
+
+  // Preserve the former tolerant loader for legacy rows. New REST writes are
+  // validated strictly, but an older partial snapshot should not lose every
+  // otherwise-readable element just because it predates the viewport shape.
   let parsed = content;
   if (typeof parsed === "string") {
     try {
@@ -69,10 +90,7 @@ const parseBoard = (content: unknown) => {
     typeof value.viewport === "object" && value.viewport !== null
       ? (value.viewport as Record<string, number>)
       : emptyBoard().viewport;
-  return {
-    elements,
-    viewport,
-  };
+  return { elements, viewport };
 };
 
 const seedDocument = (
@@ -263,35 +281,76 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
     return document;
   },
   async onStoreDocument({ documentName, document, lastContext }) {
-    const privateOnly = lastContext?.privateOnly === true;
-    const noteFilter = {
-      _id: documentName,
-      status: NoteStatus.Active,
-      ...(privateOnly
-        ? { owner: lastContext.userId, "sharedWith.0": { $exists: false } }
-        : {}),
-    };
-    const note = await NoteModel.findOne(noteFilter)
-      .select("owner title type")
-      .exec();
-    if (!note) return;
-    const encodedState = Buffer.from(Y.encodeStateAsUpdate(document));
-    if (encodedState.length > MAX_COLLABORATION_STATE_BYTES) {
-      throw new Error("Collaboration document is too large to store safely");
+    const durableStoreAttempt = lastContext?.durableStoreAttempt;
+    try {
+      const privateOnly = lastContext?.privateOnly === true;
+      const noteFilter = {
+        _id: documentName,
+        status: NoteStatus.Active,
+        ...(privateOnly
+          ? { owner: lastContext.userId, "sharedWith.0": { $exists: false } }
+          : {}),
+      };
+      const note = await NoteModel.findOne(noteFilter)
+        .select("owner title type")
+        .exec();
+      if (!note) {
+        if (durableStoreAttempt) {
+          throw new Error(
+            privateOnly
+              ? "The private note changed before its collaboration state could be stored"
+              : "The note is no longer available for collaboration storage",
+          );
+        }
+
+        // A deleted note can still receive a final WebSocket close event. There
+        // is intentionally nothing to persist in that case.
+        collaborationStoreFailures.delete(documentName);
+        return;
+      }
+      const encodedState = Buffer.from(Y.encodeStateAsUpdate(document));
+      if (encodedState.length > MAX_COLLABORATION_STATE_BYTES) {
+        throw new Error("Collaboration document is too large to store safely");
+      }
+      const content = note.type === NoteType.Document
+        ? document.getText(TEXT_KEY).toString()
+        : boardContentFromDocument(document);
+      if (Buffer.byteLength(content, "utf8") > MAX_NOTE_CONTENT_BYTES) {
+        throw new Error("Note content is too large to store safely");
+      }
+      if (
+        note.type === NoteType.Whiteboard &&
+        parseWhiteboardContent(content) === undefined
+      ) {
+        throw new Error("Whiteboard content is invalid and was not stored");
+      }
+      const sharedTitle = document.getText(TITLE_KEY).toString();
+      const title = sharedTitle ? validateNoteTitle(sharedTitle) : note.title;
+      const result = await NoteModel.updateOne(
+        noteFilter,
+        { collaborationState: encodedState, content, title },
+      ).exec();
+      if (result.matchedCount !== 1) {
+        throw new Error(
+          "The note changed before its collaboration state could be stored",
+        );
+      }
+      await invalidateOwnedNotesCache(note.owner.toString());
+
+      collaborationStoreFailures.delete(documentName);
+      if (durableStoreAttempt) {
+        durableStoreAttempt.error = undefined;
+        durableStoreAttempt.status = "succeeded";
+      }
+    } catch (error) {
+      const storeError = normalizeError(error);
+      collaborationStoreFailures.set(documentName, storeError);
+      if (durableStoreAttempt) {
+        durableStoreAttempt.error = storeError;
+        durableStoreAttempt.status = "failed";
+      }
+      throw error;
     }
-    const content = note.type === NoteType.Document
-      ? document.getText(TEXT_KEY).toString()
-      : boardContentFromDocument(document);
-    if (Buffer.byteLength(content, "utf8") > MAX_NOTE_CONTENT_BYTES) {
-      throw new Error("Note content is too large to store safely");
-    }
-    const sharedTitle = document.getText(TITLE_KEY).toString();
-    const title = sharedTitle ? validateNoteTitle(sharedTitle) : note.title;
-    await NoteModel.updateOne(
-      noteFilter,
-      { collaborationState: encodedState, content, title },
-    ).exec();
-    await invalidateOwnedNotesCache(note.owner.toString());
   },
 });
 
@@ -302,7 +361,9 @@ export const updateNoteState = async (
   changes: { content?: string; title?: string },
   privateOnly: boolean,
 ) => {
+  const durableStoreAttempt: DurableStoreAttempt = { status: "pending" };
   const connection = await collaborationServer.openDirectConnection(noteId, {
+    durableStoreAttempt,
     expiresAt: Number.MAX_SAFE_INTEGER,
     lastAccessCheck: Date.now(),
     permission: PermissionLevel.Editor,
@@ -324,6 +385,21 @@ export const updateNoteState = async (
     });
   } finally {
     await connection.disconnect();
+  }
+
+  if (durableStoreAttempt.status === "failed") {
+    const storeError =
+      durableStoreAttempt.error ?? new Error("Could not store note state");
+    // A failed direct-only document is unloaded after disconnect and its error
+    // has already been returned to the caller. Retain the global failure only
+    // when a live document remains and shutdown still needs to account for it.
+    if (!collaborationServer.documents.has(noteId)) {
+      collaborationStoreFailures.delete(noteId);
+    }
+    throw storeError;
+  }
+  if (durableStoreAttempt.status !== "succeeded") {
+    throw new Error("The collaboration store did not report a durable result");
   }
 };
 
@@ -353,6 +429,51 @@ export const disconnectNote = (noteId: string) => {
     .get(noteId)
     ?.getConnections()
     .forEach((connection) => connection.close());
+};
+
+/** Close live editors and wait for every pending collaboration save to finish. */
+export const shutdownCollaborationServer = async () => {
+  collaborationServer.closeConnections();
+
+  // Let WebSocket close handlers enqueue their final immediate stores.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const documents = [...collaborationServer.documents.values()];
+  const executions: Promise<unknown>[] = [];
+  for (const document of documents) {
+    const debounceId = `onStoreDocument-${document.name}`;
+    if (collaborationServer.debouncer.isDebounced(debounceId)) {
+      executions.push(
+        Promise.resolve(collaborationServer.debouncer.executeNow(debounceId)),
+      );
+    }
+  }
+  await Promise.all(executions);
+
+  // A store may already have started before executeNow. A no-op mutex task is
+  // a barrier that resolves only after that database write releases the lock.
+  await Promise.all(
+    documents.map((document) =>
+      document.saveMutex.runExclusive(async () => undefined),
+    ),
+  );
+
+  // A final close-triggered store can fail immediately before Hocuspocus
+  // unloads its document. Those failures are intentionally retained in this
+  // map even when the document is no longer present, so account for all of
+  // them rather than only the still-loaded snapshot above.
+  const failures = [...collaborationStoreFailures].map(
+    ([documentName, error]) => ({ documentName, error }),
+  );
+  if (failures.length) {
+    failures.forEach(({ documentName, error }) => {
+      console.error(`Collaboration state for ${documentName} was not stored`, error);
+    });
+    throw new Error(
+      `Could not safely store ${failures.length} collaboration document${
+        failures.length === 1 ? "" : "s"
+      } during shutdown`,
+    );
+  }
 };
 
 const revalidateActiveConnections = async () => {
