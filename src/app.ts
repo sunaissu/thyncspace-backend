@@ -17,6 +17,8 @@ import { APP_VERSION } from "./util/appVersion.js";
 import { requireCsrfProtection } from "./util/csrf.js";
 import { SESSION_COOKIE_NAME } from "./util/session.js";
 import { getCacheStatus } from "./util/cache.js";
+import { summarizeError } from "./util/errorLogging.js";
+import { sanitizeRequestTarget } from "./util/requestLogging.js";
 import "./util/passport.js";
 
 const app = express();
@@ -36,7 +38,14 @@ app.use(
   }),
 );
 app.use(express.json({ limit: "5mb", strict: true }));
-app.use(morgan(env.ENVIRONMENT === "production" ? "combined" : "dev"));
+morgan.token("safe-url", (request) =>
+  sanitizeRequestTarget((request as Request).originalUrl ?? request.url),
+);
+const requestLogFormat =
+  env.ENVIRONMENT === "production"
+    ? ':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"'
+    : ":method :safe-url :status :response-time ms - :res[content-length]";
+app.use(morgan(requestLogFormat));
 
 app.use(
   cors({
@@ -115,7 +124,7 @@ app.use((_req, _res, next) => {
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  console.error(error);
+  console.error("Unhandled request error", summarizeError(error));
 
   let errorMessage = "An unexpected error occurred";
   let statusCode = 500;

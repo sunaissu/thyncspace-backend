@@ -5,8 +5,16 @@ import env from "../util/validateEnv.js";
 import { requireAuth } from "../util/auth.js";
 import rateLimit from "express-rate-limit";
 import { issueCsrfToken } from "../util/csrf.js";
+import { summarizeError } from "../util/errorLogging.js";
 
 const router = express.Router()
+const googleAuthFailureUrl = new URL('/login', env.CLIENT_URL)
+googleAuthFailureUrl.searchParams.set('oauth_error', 'google')
+
+const redirectAfterGoogleFailure = (res: express.Response, error?: unknown) => {
+    if (error) console.error('Google OAuth callback failed', summarizeError(error))
+    return res.redirect(googleAuthFailureUrl.toString())
+}
 
 const loginLimiter = rateLimit({
     windowMs: 30 * 60 * 1000, // 30 minutes
@@ -40,9 +48,15 @@ router.get('/google',
     passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 router.get('/google/callback',
-    passport.authenticate('google', { failureRedirect: env.CLIENT_URL + '/login' }),
-    function (req, res) {
-        res.redirect(env.CLIENT_URL + '/notes');
+    function (req, res, next) {
+        passport.authenticate('google', (error: unknown, user?: Express.User | false | null) => {
+            if (error || !user) return redirectAfterGoogleFailure(res, error)
+
+            req.logIn(user, (loginError) => {
+                if (loginError) return redirectAfterGoogleFailure(res, loginError)
+                return res.redirect(env.CLIENT_URL + '/notes')
+            })
+        })(req, res, next)
     });
 
 router.post('/logout', requireAuth, AuthController.logout)
