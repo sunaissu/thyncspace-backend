@@ -39,11 +39,14 @@ router.use(requireAuth, mutationLimiter);
 
 router.get("/", NoteController.getNotes);
 router.get("/trash", Library.getTrash);
+router.delete("/trash/:noteId", Library.permanentlyDeleteTrash);
 router.get("/shared", NoteController.getSharedNotes);
 router.get("/favorites", NoteController.getFavoriteNotes);
 router.post("/", creationLimiter, NoteController.createNote);
 router.post("/import", creationLimiter, NoteController.importNotes);
 router.get("/:noteId/history", Library.getHistory);
+router.get("/:noteId/history/:versionId", Library.getVersion);
+router.patch("/:noteId/history/:versionId", Library.renameVersion);
 router.post("/:noteId/recover", creationLimiter, Library.recoverNote);
 router.patch("/:noteId/organization", Library.updateOrganization);
 router.get("/:noteId", NoteController.getNote);

@@ -457,3 +457,12 @@ export const validateNoteOrganization = (value: unknown) => {
   });
   return { notebook, tags: [...new Set(tags)] };
 };
+
+/** Imported paths are metadata, never filesystem destinations. */
+export function validateSourcePath(input: unknown): string | undefined {
+  if (input === undefined) return undefined;
+  if (typeof input !== "string" || input.length > 1024 || /[\p{Cc}]/u.test(input)) throw createHttpError(400, "Invalid source path");
+  const path = input.split("\\").join("/");
+  if (!path || path.startsWith("/") || /^[a-z]:/i.test(path) || path.split("/").some(part => !part || part === "." || part === "..")) throw createHttpError(400, "Source path must be relative without traversal");
+  return path;
+}

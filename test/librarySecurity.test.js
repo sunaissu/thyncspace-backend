@@ -128,3 +128,48 @@ test('invalid stored whiteboards fail closed rather than opening an empty board'
   NoteModel.findOne = () => { const query = { select: () => query, exec: async () => ({ title: 'Legacy', type: NoteType.Whiteboard, content: '{bad json' }) }; return query; };
   await assert.rejects(collaborationServer.configuration.onLoadDocument({ documentName: noteId }), /Stored whiteboard content is invalid/);
 });
+
+
+test('durable receipts describe the persisted snapshot, including deletions, not later edits', async t => {
+  const { createHash } = await import('node:crypto');
+  const find = NoteModel.findOne, update = NoteModel.updateOne;
+  t.after(() => { NoteModel.findOne = find; NoteModel.updateOne = update; });
+  const document = new Y.Doc(); document.getText('document-content').insert(0, 'abc');
+  const { collaborationSnapshot } = await import('../dist/util/collaborationSnapshot.js');
+  const fingerprint = () => createHash('sha256').update(collaborationSnapshot(document, 'document')).digest('hex');
+  const beforeDelete = fingerprint(); document.getText('document-content').delete(1, 1);
+  const stored = fingerprint(); assert.notEqual(stored, beforeDelete);
+  const receipts = []; document.broadcastStateless = payload => receipts.push(JSON.parse(payload));
+  const query = { select: () => query, exec: async () => ({ owner, title: 'Note', content: 'abc', type: NoteType.Document }) };
+  NoteModel.findOne = () => query;
+  NoteModel.updateOne = () => ({ exec: async () => { document.getText('document-content').insert(0, 'later'); return { matchedCount: 1 }; } });
+  await collaborationServer.configuration.onStoreDocument({ documentName: noteId, document });
+  assert.equal(receipts[0].fingerprint, stored); assert.notEqual(receipts[0].fingerprint, fingerprint());
+  document.destroy();
+});
+
+
+test('vault source paths are relative metadata and reject traversal and controls', async () => {
+ const { validateSourcePath } = await import('../dist/util/validation.js');
+ assert.equal(validateSourcePath('work/topic/note.md'), 'work/topic/note.md');
+ for (const value of ['../note.md', '/root.md', 'C:/secret.md', 'a//b.md', 'bad\u0000.md', { $ne: '' }]) assert.throws(() => validateSourcePath(value));
+});
+
+test('awareness binds one session to the authenticated owner and strips untrusted fields', async () => {
+  const context = { userId: owner, username: 'Authenticated owner', expiresAt: Date.now() + 60000 };
+  const connection = { context, sendStateless() {} };
+  const other = { context: { presenceClientId: 99, presenceColor: '#2563eb' } };
+  const document = { getConnections: () => [connection, other] };
+  const states = new Map([[1, { user: { id: 'forged', name: 'Administrator', color: 'url(evil)' }, cursor: { surface: 'board', x: 12, y: 34 }, calculator: { secret: 5 } }], [123, {}]]);
+  await collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states });
+  assert.equal(states.size, 1);
+  assert.deepEqual(states.get(1).user, { id: owner, name: 'Authenticated owner', color: '#b91c1c' });
+  assert.equal(states.get(1).calculator, undefined);
+  assert.deepEqual(states.get(1).cursor, { surface: 'board', x: 12, y: 34 });
+  await assert.rejects(collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states: new Map([[99, { user: {} }]]) }), /session mismatch/);
+  const impostor = { userId: 'other', username: 'Other', expiresAt: Date.now() + 60000 };
+  await assert.rejects(collaborationServer.configuration.beforeHandleAwareness({ context: impostor, connection: { context: impostor }, document, states: new Map([[99, { user: {} }]]) }), /already owned/);
+  const invalid = new Map([[1, { user: {}, cursor: { surface: 'board', x: Infinity, y: 0 } }]]);
+  await collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states: invalid });
+  assert.equal(invalid.get(1).cursor, null);
+});

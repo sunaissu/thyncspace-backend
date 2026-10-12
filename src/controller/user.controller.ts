@@ -1,3 +1,4 @@
+import { refreshPresenceIdentity } from "../collaboration/server.js";
 import { Request, Response } from 'express'
 import * as userService from '../services/user.service.js'
 import { cacheKeys, deleteCachedKeys } from '../util/cache.js'
@@ -29,6 +30,7 @@ export const updateUsername = async (req: Request, res: Response) => {
 
   const updatedUser = await userService.updateUsername(userId, newUsername)
   await deleteCachedKeys(cacheKeys.sessionUser(userId))
+  refreshPresenceIdentity(userId, updatedUser.username)
   res.status(200).json({
     message: 'Username updated successfully',
     user: userResponse(updatedUser),

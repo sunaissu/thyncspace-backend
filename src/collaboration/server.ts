@@ -1,3 +1,6 @@
+import { parsePresence } from "../util/presence.js";
+import { collaborationSnapshot } from "../util/collaborationSnapshot.js";
+import { createHash } from "node:crypto";
 import { Hocuspocus } from "@hocuspocus/server";
 import type { Server as HttpServer } from "http";
 import mongoose from "mongoose";
@@ -29,6 +32,8 @@ interface CollaborationContext {
   privateOnly?: boolean;
   userId: string;
   username: string;
+  presenceClientId?: number;
+  presenceColor?: string;
 }
 
 const ELEMENTS_KEY = "noteboard-elements";
@@ -229,15 +234,31 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
       validateCollaborationUpdate(document, payload, context.noteType);
     }
   },
-  async beforeHandleAwareness({ context, states }) {
-    if (!context) return;
-    states.forEach((state) => {
-      state.user = {
-        id: context.userId,
-        name: context.username,
-        color: state.user?.color,
-      };
-    });
+  async beforeHandleAwareness({ context, states, document, connection }) {
+    if (!context || !connection) { states.clear(); return; }
+    if (context.expiresAt <= Date.now()) throw new Error("Collaboration token expired");
+    // Scratch awareness also contains its own empty state; never publish it.
+    for (const [id, state] of states) if (!state.user) states.delete(id);
+    if (states.size > 1) throw new Error("A connection may publish only its own cursor");
+    for (const [id, state] of states) {
+      if (!Number.isSafeInteger(id) || id < 0 || (context.presenceClientId !== undefined && context.presenceClientId !== id)) throw new Error("Cursor session mismatch");
+      const others = document.getConnections().filter(peer => peer !== connection);
+      if (others.some(peer => peer.context?.presenceClientId === id)) throw new Error("Cursor session is already owned");
+      context.presenceClientId = id;
+      if (!context.presenceColor) {
+        const used = new Set(others.map(peer => peer.context?.presenceColor));
+        const colors = ["#2563eb", "#b91c1c", "#047857", "#7e22ce", "#c2410c", "#0e7490", "#be185d", "#4d7c0f"];
+        let color = colors.find(value => !used.has(value));
+        let offset = 0;
+        while (!color) { const candidate = "#" + createHash("sha256").update(context.userId + ":" + id + ":" + offset++).digest("hex").slice(0, 6); if (!used.has(candidate)) color = candidate; }
+        context.presenceColor = color;
+        connection.sendStateless(JSON.stringify({ type: "presence-identity", id: context.userId, name: context.username.slice(0, 80), color, clientId: id }));
+      }
+      states.set(id, {
+        user: { id: context.userId, name: context.username.slice(0, 80), color: context.presenceColor },
+        cursor: parsePresence(state.cursor),
+      });
+    }
   },
   async onLoadDocument({ documentName }) {
     const note = await NoteModel.findOne({
@@ -287,6 +308,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
         return;
       }
       const encodedState = Buffer.from(Y.encodeStateAsUpdate(document));
+      const storedFingerprint = createHash("sha256").update(collaborationSnapshot(document, note.type)).digest("hex");
       if (encodedState.length > MAX_COLLABORATION_STATE_BYTES) {
         throw new Error("Collaboration document is too large to store safely");
       }
@@ -311,6 +333,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
         noteFilter,
         {
           $set: { collaborationState: encodedState, content, title },
+          ...(!sameContent ? { $inc: { contentRevision: 1 } } : {}),
           ...(!sameContent || note.title !== title ? {
             $push: { history: { $each: [{ title: note.title, content: note.content ?? "", savedAt: note.updatedAt ?? new Date() }], $slice: -5 } },
           } : {}),
@@ -323,6 +346,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
       }
       await invalidateOwnedNotesCache(note.owner.toString());
 
+      document.broadcastStateless?.(JSON.stringify({ type: "stored", version: 1, fingerprint: storedFingerprint }));
       collaborationStoreFailures.delete(documentName);
       if (durableStoreAttempt) {
         durableStoreAttempt.error = undefined;
@@ -331,6 +355,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
     } catch (error) {
       const storeError = normalizeError(error);
       collaborationStoreFailures.set(documentName, storeError);
+      document.broadcastStateless?.(JSON.stringify({ type: "store-error", version: 1 }));
       if (durableStoreAttempt) {
         durableStoreAttempt.error = storeError;
         durableStoreAttempt.status = "failed";
@@ -387,6 +412,15 @@ export const updateNoteState = async (
   if (durableStoreAttempt.status !== "succeeded") {
     throw new Error("The collaboration store did not report a durable result");
   }
+};
+
+export const refreshPresenceIdentity = (userId: string, username: string) => {
+  collaborationServer.documents.forEach(document => document.getConnections().forEach(connection => {
+    const context = connection.context;
+    if (context.userId !== userId) return;
+    context.username = username;
+    if (context.presenceClientId !== undefined) connection.sendStateless(JSON.stringify({ type: "presence-identity", id: userId, name: username.slice(0, 80), color: context.presenceColor, clientId: context.presenceClientId }));
+  }));
 };
 
 export const updateCollaboratorPermission = (

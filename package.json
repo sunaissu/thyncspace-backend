@@ -11,8 +11,9 @@
     "start": "node dist/server.js",
     "lint": "eslint . --ext .ts",
     "serve": "concurrently \"tsc --watch\" \"node --watch dist/server.js\"",
-    "test": "npm run build && node --test",
-    "typecheck": "tsc --noEmit"
+    "test": "npm run build && node --test test/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "test:integration": "npm run build && node --test integration/*.test.js"
   },
   "keywords": [],
   "author": "",
@@ -55,6 +56,7 @@
     "@typescript-eslint/parser": "^8.71.1",
     "concurrently": "^8.2.0",
     "eslint": "^8.42.0",
+    "mongodb-memory-server": "^11.3.0",
     "typescript": "^5.1.3"
   }
 }

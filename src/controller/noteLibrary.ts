@@ -43,7 +43,7 @@ export const getHistory: RequestHandler = async (req, res, next) => {
   try {
     const note = await NoteModel.findOne({ _id: validId(req.params.noteId), owner: ownerId(req), status: NoteStatus.Active }).select("+history").exec();
     if (!note) throw createHttpError(404, "Note not found");
-    res.json([...note.history].reverse().map(version => ({ id: version._id, title: version.title, savedAt: version.savedAt })));
+    res.json([...note.history].reverse().map(version => ({ id: version._id, title: version.title, savedAt: version.savedAt, label: version.label })));
   } catch (error) { next(error); }
 };
 
@@ -61,7 +61,7 @@ export const recoverNote: RequestHandler = async (req, res, next) => {
       if (versionId && !version) throw createHttpError(404, "Version not found");
       const content = validateNoteContentForType(version?.content ?? source.content ?? "", source.type);
       const input = { _id: new mongoose.Types.ObjectId(), owner: userId, title: version?.title ?? source.title, type: source.type, content,
-        notebook: source.notebook, tags: source.tags };
+        notebook: source.notebook, tags: source.tags, sourcePath: source.sourcePath };
       // Trash restoration consumes the tombstone atomically; version recovery
       // deliberately leaves the original note and history intact.
       const session = await mongoose.startSession();
@@ -79,6 +79,44 @@ export const recoverNote: RequestHandler = async (req, res, next) => {
         await invalidateOwnedNotesCache(userId);
         res.status(201).json(toNoteResponse(recovered, userId));
       } finally { await session.endSession(); }
+    });
+  } catch (error) { next(error); }
+};
+
+
+export const getVersion: RequestHandler = async (req, res, next) => {
+  try {
+    const note = await NoteModel.findOne({ _id: validId(req.params.noteId), owner: ownerId(req), status: NoteStatus.Active }).select("+history").exec();
+    if (!note) throw createHttpError(404, "Note not found");
+    const versionId = validId(req.params.versionId);
+    const version = note.history.find(item => item._id?.toString() === versionId);
+    if (!version) throw createHttpError(404, "Version not found");
+    res.json({ id: version._id, title: version.title, content: version.content, type: note.type, savedAt: version.savedAt, label: version.label });
+  } catch (error) { next(error); }
+};
+
+export const renameVersion: RequestHandler = async (req, res, next) => {
+  try {
+    const noteId = validId(req.params.noteId), versionId = validId(req.params.versionId), userId = ownerId(req);
+    const label = req.body?.label;
+    if (typeof label !== "string" || label.trim().length > 80 || /\p{Cc}/u.test(label)) throw createHttpError(400, "Version names must be at most 80 characters without controls");
+    await withNoteMutationLock(noteId, async () => {
+      const result = await NoteModel.updateOne({ _id: noteId, owner: userId, status: NoteStatus.Active, "history._id": versionId }, { $set: { "history.$.label": label.trim() } }).exec();
+      if (result.matchedCount !== 1) throw createHttpError(404, "Version not found");
+      res.json({ label: label.trim() });
+    });
+  } catch (error) { next(error); }
+};
+
+export const permanentlyDeleteTrash: RequestHandler = async (req, res, next) => {
+  try {
+    const noteId = validId(req.params.noteId), userId = ownerId(req);
+    if (req.body?.confirmation !== noteId) throw createHttpError(400, "Explicit note confirmation is required");
+    await withNoteMutationLock(noteId, async () => {
+      const result = await NoteModel.deleteOne({ _id: noteId, owner: userId, status: NoteStatus.Trashed }).exec();
+      if (result.deletedCount !== 1) throw createHttpError(404, "Trashed note not found");
+      await invalidateOwnedNotesCache(userId);
+      res.sendStatus(204);
     });
   } catch (error) { next(error); }
 };

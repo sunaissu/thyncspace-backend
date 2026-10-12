@@ -10,6 +10,7 @@ const noteSchema = new Schema(
       default: NoteType.Document,
     },
     content: { type: String, maxlength: 1024 * 1024 },
+    contentRevision: { type: Number, default: 0, min: 0 },
     status: {
       type: String,
       enum: Object.values(NoteStatus),
@@ -28,12 +29,14 @@ const noteSchema = new Schema(
     ],
     favoritedBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
     notebook: { type: String, default: "", maxlength: 80 },
+    sourcePath: { type: String, maxlength: 1024 },
     tags: { type: [String], default: [] },
     trashedAt: { type: Date },
     history: { type: [new Schema({
       title: { type: String, required: true },
       content: { type: String, default: "" },
       savedAt: { type: Date, required: true },
+      label: { type: String, maxlength: 80 },
     })], select: false, default: [] },
     collaborationState: { type: Buffer, select: false },
   },

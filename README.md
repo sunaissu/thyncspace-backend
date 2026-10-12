@@ -91,7 +91,7 @@ Content changes atomically retain the prior title/content with the current Yjs
 state. History is capped at five snapshots to bound the MongoDB document size;
 it is recovery history, not an audit log. Unchanged title/content does not consume
 another version; generated board timestamps are ignored for this comparison. History and organization are omitted from collaborator responses.
-Trash has no automatic expiration or permanent-delete UI in this version.
+Trash has no automatic expiration. Permanent deletion requires explicit confirmation.
 
 Recovery uses a MongoDB transaction and creates a fresh private note ID without
 old Yjs state, collaborators, or favorites. Restoring trash consumes the original
@@ -108,3 +108,28 @@ change does not add multi-instance synchronization or distributed mutation locks
 
 Run `npm run check` for lint, types, build, and regression tests. Local watch mode
 uses Node 24's built-in watcher. See REVIEW-2026-10-12.md for review evidence.
+
+## Revision protection and integration checks
+
+PATCH content requests must include expectedRevision from the latest contentRevision
+response. Missing revisions return 428; mismatches return 409 without replacing
+content. First-share snapshots carry expectedRevision too. Shared content updates
+use the collaboration provider; REST title changes remain supported. Deploy the
+frontend and backend together and refresh old clients, whose unversioned saves
+will be rejected. Existing notes begin at content revision zero without rewriting
+their content. Do not roll back the revision checks while newer clients are editing.
+
+GET /api/notes/:noteId/history/:versionId returns an owner-only saved snapshot.
+PATCH at that path names it with a label of at most 80 characters. Names do not pin
+versions beyond the five-snapshot limit. DELETE /api/notes/trash/:noteId requires
+{ confirmation: noteId } and permanently removes only an owned trashed note.
+Imported sourcePath values are bounded relative metadata, never filesystem paths.
+
+Run npm run test:integration for disposable replica-set tests, including rollback
+and concurrency. MongoDB 8.0.16 downloads on first run; no Docker or production
+connection is used. With the sibling frontend installed, its npm run test:live
+checks this built server with Chrome and real WebSocket/database traffic.
+
+## Cursor ownership
+
+Awareness accepts one cursor session per connection. The server replaces incoming account IDs, names, and colors with authenticated identity and an available session color, rejects attempts to reuse another connection's cursor ID, and strips unrelated fields. Positions are finite and bounded. Disconnects remove presence; it is never stored as note content. Accepted username changes refresh the live session identity. Only document and whiteboard state belongs in collaboration; the frontend calculator is private.

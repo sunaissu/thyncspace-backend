@@ -29,7 +29,15 @@ import {
   validateNoteTitle,
   validateNoteType,
   validateShareIdentifier,
+  validateSourcePath,
 } from "../util/validation.js";
+
+const requireContentRevision = (expected: unknown, actual: number) => {
+  if (!Number.isSafeInteger(expected) || (expected as number) < 0) {
+    throw createHttpError(428, "A content revision is required; reload the note before saving");
+  }
+  if (expected !== actual) throw createHttpError(409, "This note changed in another session. Your local draft has been kept; compare it with the latest server copy before saving.");
+};
 
 const requireValidNoteId = (noteId: string) => {
   if (!mongoose.isValidObjectId(noteId)) {
@@ -144,7 +152,7 @@ export const importNotes: RequestHandler = async (req, res, next) => {
 
     let totalContentBytes = 0;
     const userId = getUserId(req);
-    const notesToCreate = req.body.notes.map((input: unknown) => {
+    const notesToCreate: Array<{ owner: string; title: string; type: NoteType; content: string; sourcePath?: string }> = req.body.notes.map((input: unknown) => {
       if (typeof input !== "object" || input === null) {
         throw createHttpError(400, "Every imported note must be an object");
       }
@@ -154,6 +162,7 @@ export const importNotes: RequestHandler = async (req, res, next) => {
       return {
         owner: userId,
         title: validateNoteTitle(candidate.title),
+        sourcePath: validateSourcePath(candidate.sourcePath),
         type: NoteType.Document,
         content,
       };
@@ -162,17 +171,20 @@ export const importNotes: RequestHandler = async (req, res, next) => {
       throw createHttpError(413, "The selected import is too large");
     }
 
+    const importIds = notesToCreate.map(() => new mongoose.Types.ObjectId());
     const session = await mongoose.startSession();
     try {
-      const createdNotes = await session.withTransaction(() =>
-        NoteModel.insertMany(notesToCreate, { session }),
+      await session.withTransaction(() =>
+        NoteModel.insertMany(notesToCreate.map((note, index) => ({ ...note, _id: importIds[index] })), { session }),
       );
-      if (!createdNotes) throw new Error("Import transaction did not complete");
+      const createdNotes = await NoteModel.find({ _id: { $in: importIds }, owner: userId }).exec();
+      const byId = new Map(createdNotes.map(note => [note.id, note]));
+      const orderedNotes = importIds.map(id => byId.get(id.toString())!);
       await invalidateOwnedNotesCache(userId);
       res
         .status(201)
         .json(
-          createdNotes.map((note: InstanceType<typeof NoteModel>) =>
+          orderedNotes.map((note: InstanceType<typeof NoteModel>) =>
             toNoteResponse(note, userId),
           ),
         );
@@ -215,7 +227,7 @@ export const updateNote: RequestHandler = async (req, res, next) => {
           },
         ],
       })
-        .select("type")
+        .select("type sharedWith contentRevision")
         .exec();
       if (!editableNote) {
         const noteExists = await NoteModel.exists({
@@ -230,6 +242,10 @@ export const updateNote: RequestHandler = async (req, res, next) => {
         );
       }
 
+      if (content !== undefined) {
+        if (editableNote.sharedWith.length) throw createHttpError(409, "Shared content must be changed through live editing");
+        requireContentRevision(req.body?.expectedRevision, editableNote.contentRevision ?? 0);
+      }
       if (content !== undefined && editableNote.type === NoteType.Whiteboard) {
         validateNoteContentForType(content, NoteType.Whiteboard);
       }
@@ -278,7 +294,7 @@ export const updatePrivateNote: RequestHandler = async (req, res, next) => {
         _id: noteId,
         status: NoteStatus.Active,
       })
-        .select("owner sharedWith type")
+        .select("owner sharedWith type contentRevision")
         .exec();
       if (!note) throw createHttpError(404, "Note not found");
       if (note.owner.toString() !== userId) {
@@ -291,6 +307,7 @@ export const updatePrivateNote: RequestHandler = async (req, res, next) => {
         );
       }
 
+      if (content !== undefined) requireContentRevision(req.body?.expectedRevision, note.contentRevision ?? 0);
       if (content !== undefined && note.type === NoteType.Whiteboard) {
         validateNoteContentForType(content, NoteType.Whiteboard);
       }
@@ -469,6 +486,7 @@ export const shareNote: RequestHandler = async (req, res, next) => {
             throw createHttpError(400, "The note snapshot is invalid");
           }
           const snapshot = rawSnapshot as Record<string, unknown>;
+          requireContentRevision(snapshot.expectedRevision, note.contentRevision ?? 0);
           snapshotContent = validateNoteContentForType(snapshot.text, note.type as NoteType);
           if (snapshotContent === undefined) {
             throw createHttpError(400, "The note snapshot is missing its content");
