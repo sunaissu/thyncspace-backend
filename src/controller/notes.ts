@@ -1,3 +1,4 @@
+import { withNoteMutationLock } from "../util/noteMutationLock.js";
 import type { Request, RequestHandler } from "express";
 import createHttpError from "http-errors";
 import mongoose from "mongoose";
@@ -15,6 +16,7 @@ import { toNoteResponse } from "../util/noteResponse.js";
 import {
   disconnectCollaborator,
   disconnectNote,
+  flushNoteState,
   updateCollaboratorPermission,
   updateNoteState,
 } from "../collaboration/server.js";
@@ -51,30 +53,6 @@ const getOwnedNote = async (noteId: string, userId: string) => {
     throw createHttpError(403, "Only the owner can manage sharing");
   }
   return note;
-};
-
-const noteMutationLocks = new Map<string, Promise<void>>();
-
-const withNoteMutationLock = async <Result>(
-  noteId: string,
-  operation: () => Promise<Result>,
-) => {
-  const previous = noteMutationLocks.get(noteId) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  noteMutationLocks.set(noteId, current);
-  await previous;
-
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (noteMutationLocks.get(noteId) === current) {
-      noteMutationLocks.delete(noteId);
-    }
-  }
 };
 
 export const getNotes: RequestHandler = async (req, res, next) => {
@@ -210,13 +188,13 @@ export const updateNote: RequestHandler = async (req, res, next) => {
   const noteId = req.params.noteId as string;
   try {
     requireValidNoteId(noteId);
-    if (req.body.title === undefined && req.body.text === undefined) {
+    if (req.body?.title === undefined && req.body?.text === undefined) {
       throw createHttpError(400, "Nothing to update");
     }
 
     const title =
-      req.body.title === undefined ? undefined : validateNoteTitle(req.body.title);
-    const content = validateNoteContent(req.body.text);
+      req.body?.title === undefined ? undefined : validateNoteTitle(req.body?.title);
+    const content = validateNoteContent(req.body?.text);
     const userId = getUserId(req);
     const changes: { content?: string; title?: string } = {};
     if (title !== undefined) changes.title = title;
@@ -283,13 +261,13 @@ export const updatePrivateNote: RequestHandler = async (req, res, next) => {
   const noteId = req.params.noteId as string;
   try {
     requireValidNoteId(noteId);
-    if (req.body.title === undefined && req.body.text === undefined) {
+    if (req.body?.title === undefined && req.body?.text === undefined) {
       throw createHttpError(400, "Nothing to update");
     }
 
     const title =
-      req.body.title === undefined ? undefined : validateNoteTitle(req.body.title);
-    const content = validateNoteContent(req.body.text);
+      req.body?.title === undefined ? undefined : validateNoteTitle(req.body?.title);
+    const content = validateNoteContent(req.body?.text);
     const changes: { content?: string; title?: string } = {};
     if (title !== undefined) changes.title = title;
     if (content !== undefined) changes.content = content;
@@ -357,8 +335,10 @@ export const deleteNote: RequestHandler = async (req, res, next) => {
         throw createHttpError(403, "Only the owner can delete this note");
       }
 
+      await flushNoteState(noteId);
+      await NoteModel.updateOne({ _id: noteId, owner: userId, status: NoteStatus.Active },
+        { $set: { status: NoteStatus.Trashed, trashedAt: new Date() }, $unset: { sharedWith: 1, favoritedBy: 1 } }).exec();
       disconnectNote(noteId);
-      await note.deleteOne();
       await invalidateOwnedNotesCache(note.owner.toString());
     });
     res.sendStatus(204);

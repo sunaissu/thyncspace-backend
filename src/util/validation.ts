@@ -265,7 +265,8 @@ const isValidWhiteboardElement = (
     value.type === "image" &&
     (typeof value.dataUrl !== "string" ||
       value.dataUrl.length > MAX_IMAGE_DATA_URL_LENGTH ||
-      !/^data:image\/[a-z0-9.+-]+;base64,/i.test(value.dataUrl))
+      !/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(value.dataUrl) ||
+      value.dataUrl.slice(value.dataUrl.indexOf(",") + 1).length % 4 !== 0)
   ) {
     return false;
   }
@@ -274,8 +275,7 @@ const isValidWhiteboardElement = (
 
 /**
  * Parses the persisted Noteboard shape without throwing. The collaboration
- * loader uses this tolerant form so a legacy malformed record can still open
- * as an empty board instead of taking down the realtime connection.
+ * loader rejects invalid records without overwriting the stored snapshot.
  */
 export const parseWhiteboardContent = (
   content: unknown,
@@ -439,4 +439,21 @@ export const getShareIdentifierLookupQueries = (identifier: string) => {
   return identifier.includes("@")
     ? [{ email: normalizeEmail(identifier) }, usernameQuery]
     : [usernameQuery];
+};
+
+export const validateNoteOrganization = (value: unknown) => {
+  if (!isRecord(value) || typeof value.notebook !== "string" || !Array.isArray(value.tags)) {
+    throw createHttpError(400, "Provide a notebook and a list of tags");
+  }
+  const notebook = value.notebook.trim();
+  if (notebook.length > 80 || CONTROL_CHARACTER_PATTERN.test(notebook) || value.tags.length > 20) {
+    throw createHttpError(400, "Use a notebook up to 80 characters and at most 20 tags");
+  }
+  const tags = value.tags.map((tag: unknown) => {
+    if (typeof tag !== "string" || !tag.trim() || tag.trim().length > 40 || CONTROL_CHARACTER_PATTERN.test(tag)) {
+      throw createHttpError(400, "Tags must contain 1 to 40 characters");
+    }
+    return tag.trim().toLowerCase();
+  });
+  return { notebook, tags: [...new Set(tags)] };
 };

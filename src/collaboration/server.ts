@@ -25,6 +25,7 @@ interface CollaborationContext {
   expiresAt: number;
   lastAccessCheck: number;
   permission: PermissionLevel;
+  noteType?: NoteType;
   privateOnly?: boolean;
   userId: string;
   username: string;
@@ -57,40 +58,11 @@ interface UpgradeWindow {
 
 const upgradeWindows = new Map<string, UpgradeWindow>();
 
-const emptyBoard = () => ({
-  elements: [] as Array<Record<string, unknown>>,
-  viewport: { panX: 0, panY: 0, zoom: 1 } as Record<string, number>,
-});
-
 const parseBoard = (content: unknown) => {
-  const validated = parseWhiteboardContent(content);
+  const validated = parseWhiteboardContent(content ?? "");
   if (validated) return validated;
 
-  // Preserve the former tolerant loader for legacy rows. New REST writes are
-  // validated strictly, but an older partial snapshot should not lose every
-  // otherwise-readable element just because it predates the viewport shape.
-  let parsed = content;
-  if (typeof parsed === "string") {
-    try {
-      parsed = JSON.parse(parsed) as unknown;
-    } catch {
-      return emptyBoard();
-    }
-  }
-  if (typeof parsed !== "object" || parsed === null) return emptyBoard();
-
-  const value = parsed as Record<string, unknown>;
-  const elements = Array.isArray(value.elements)
-    ? value.elements.filter(
-        (element): element is Record<string, unknown> =>
-          typeof element === "object" && element !== null,
-      )
-    : [];
-  const viewport =
-    typeof value.viewport === "object" && value.viewport !== null
-      ? (value.viewport as Record<string, number>)
-      : emptyBoard().viewport;
-  return { elements, viewport };
+  throw new Error("Stored whiteboard content is invalid; restore a valid snapshot before editing");
 };
 
 const seedDocument = (
@@ -218,11 +190,12 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
   async onAuthenticate({ documentName, token, connectionConfig }) {
     const payload = verifyCollaborationToken(token);
     if (payload.noteId !== documentName) throw new Error("Token note mismatch");
-    const { permission } = await getAccess(documentName, payload.userId);
+    const { permission, note } = await getAccess(documentName, payload.userId);
     const user = await UserModel.findById(payload.userId).select("username").exec();
     if (!user) throw new Error("User not found");
     connectionConfig.readOnly = permission !== PermissionLevel.Editor;
     return {
+      noteType: note.type,
       expiresAt: payload.expiresAt,
       lastAccessCheck: Date.now(),
       permission,
@@ -234,13 +207,14 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
     const payload = verifyCollaborationToken(token);
     if (payload.noteId !== documentName) throw new Error("Token note mismatch");
     if (payload.userId !== context.userId) throw new Error("Token user mismatch");
-    const { permission } = await getAccess(documentName, payload.userId);
+    const { permission, note } = await getAccess(documentName, payload.userId);
     connection.readOnly = permission !== PermissionLevel.Editor;
+    context.noteType = note.type;
     context.expiresAt = payload.expiresAt;
     context.lastAccessCheck = Date.now();
     context.permission = permission;
   },
-  async beforeSync({ context, documentName, connection }) {
+  async beforeSync({ context, documentName, connection, document, type, payload }) {
     if (context.expiresAt <= Date.now()) {
       throw new Error("Collaboration token expired");
     }
@@ -249,6 +223,10 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
       context.lastAccessCheck = Date.now();
       context.permission = permission;
       connection.readOnly = permission !== PermissionLevel.Editor;
+    }
+    if ((type === 1 || type === 2) && !connection.readOnly) {
+      if (!context.noteType) throw new Error("Unknown note type");
+      validateCollaborationUpdate(document, payload, context.noteType);
     }
   },
   async beforeHandleAwareness({ context, states }) {
@@ -292,7 +270,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
           : {}),
       };
       const note = await NoteModel.findOne(noteFilter)
-        .select("owner title type")
+        .select("owner title type content updatedAt")
         .exec();
       if (!note) {
         if (durableStoreAttempt) {
@@ -326,9 +304,17 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
       }
       const sharedTitle = document.getText(TITLE_KEY).toString();
       const title = sharedTitle ? validateNoteTitle(sharedTitle) : note.title;
+      const sameContent = note.type === NoteType.Document
+        ? note.content === content
+        : JSON.stringify(parseWhiteboardContent(note.content)) === JSON.stringify(parseWhiteboardContent(content));
       const result = await NoteModel.updateOne(
         noteFilter,
-        { collaborationState: encodedState, content, title },
+        {
+          $set: { collaborationState: encodedState, content, title },
+          ...(!sameContent || note.title !== title ? {
+            $push: { history: { $each: [{ title: note.title, content: note.content ?? "", savedAt: note.updatedAt ?? new Date() }], $slice: -5 } },
+          } : {}),
+        },
       ).exec();
       if (result.matchedCount !== 1) {
         throw new Error(
@@ -568,7 +554,14 @@ export const attachCollaborationServer = (server: HttpServer) => {
   });
 
   server.on("upgrade", (request, socket, head) => {
-    const url = new URL(request.url ?? "/", "http://localhost");
+    let url: URL;
+    try {
+      if (!request.url?.startsWith("/") || request.url.startsWith("//")) throw new Error("Invalid upgrade target");
+      url = new URL(request.url, "http://localhost");
+    } catch {
+      rejectUpgrade(socket, 400, "Bad Request");
+      return;
+    }
     if (url.pathname !== "/collaboration") {
       socket.destroy();
       return;
@@ -630,4 +623,32 @@ export const attachCollaborationServer = (server: HttpServer) => {
   }, COLLABORATION_TOKEN_SWEEP_MS);
   sweepTimer.unref();
   server.once("close", () => clearInterval(sweepTimer));
+};
+
+/** Persist live edits before moving a note out of the active collection. */
+export const flushNoteState = async (noteId: string) => {
+  const document = collaborationServer.documents.get(noteId);
+  if (!document) return;
+  await collaborationServer.storeDocumentHooks(document, {
+    clientsCount: document.getConnectionsCount(), document, documentName: noteId,
+    instance: collaborationServer, lastContext: undefined,
+    lastTransactionOrigin: { source: "local" },
+  }, true);
+  const failure = collaborationStoreFailures.get(noteId);
+  if (failure) throw failure;
+};
+
+/** Validate on an isolated replica before an editor can poison live shared state. */
+export const validateCollaborationUpdate = (document: Y.Doc, update: Uint8Array, type: NoteType) => {
+  const candidate = new Y.Doc();
+  try {
+    Y.applyUpdate(candidate, Y.encodeStateAsUpdate(document));
+    Y.applyUpdate(candidate, update);
+    if (Y.encodeStateAsUpdate(candidate).byteLength > MAX_COLLABORATION_STATE_BYTES) throw new Error("Collaboration document is too large");
+    const title = candidate.getText(TITLE_KEY).toString();
+    if (title) validateNoteTitle(title);
+    const content = type === NoteType.Document ? candidate.getText(TEXT_KEY).toString() : boardContentFromDocument(candidate);
+    if (Buffer.byteLength(content, "utf8") > MAX_NOTE_CONTENT_BYTES) throw new Error("Note content is too large");
+    if (type === NoteType.Whiteboard && !parseWhiteboardContent(content)) throw new Error("Invalid whiteboard update");
+  } finally { candidate.destroy(); }
 };

@@ -3,6 +3,8 @@ import rateLimit from "express-rate-limit";
 import * as NoteController from "../controller/notes.js";
 import { requireAuth } from "../util/auth.js";
 
+import * as Library from "../controller/noteLibrary.js";
+
 const router = express.Router();
 
 const mutationLimiter = rateLimit({
@@ -36,10 +38,14 @@ const collaborationTokenLimiter = rateLimit({
 router.use(requireAuth, mutationLimiter);
 
 router.get("/", NoteController.getNotes);
+router.get("/trash", Library.getTrash);
 router.get("/shared", NoteController.getSharedNotes);
 router.get("/favorites", NoteController.getFavoriteNotes);
 router.post("/", creationLimiter, NoteController.createNote);
 router.post("/import", creationLimiter, NoteController.importNotes);
+router.get("/:noteId/history", Library.getHistory);
+router.post("/:noteId/recover", creationLimiter, Library.recoverNote);
+router.patch("/:noteId/organization", Library.updateOrganization);
 router.get("/:noteId", NoteController.getNote);
 router.patch("/:noteId/private", NoteController.updatePrivateNote);
 router.patch("/:noteId", NoteController.updateNote);

@@ -64,7 +64,10 @@ const apiLimiter = rateLimit({
   ipv6Subnet: 56,
   message: { error: "Too many requests; please try again later." },
 });
-app.use("/api", apiLimiter);
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+}, apiLimiter);
 
 app.get("/healthz", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");

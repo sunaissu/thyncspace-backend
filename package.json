@@ -10,7 +10,7 @@
     "check": "npm run lint && npm run typecheck && npm test",
     "start": "node dist/server.js",
     "lint": "eslint . --ext .ts",
-    "serve": "concurrently \"tsc --watch\" \"nodemon dist/server.js\"",
+    "serve": "concurrently \"tsc --watch\" \"node --watch dist/server.js\"",
     "test": "npm run build && node --test",
     "typecheck": "tsc --noEmit"
   },
@@ -51,11 +51,10 @@
     "@types/passport": "^1.0.17",
     "@types/passport-google-oauth20": "^2.0.17",
     "@types/ws": "^8.18.1",
-    "@typescript-eslint/eslint-plugin": "^5.59.11",
-    "@typescript-eslint/parser": "^5.59.11",
+    "@typescript-eslint/eslint-plugin": "^8.71.1",
+    "@typescript-eslint/parser": "^8.71.1",
     "concurrently": "^8.2.0",
     "eslint": "^8.42.0",
-    "nodemon": "^3.1.14",
     "typescript": "^5.1.3"
   }
 }

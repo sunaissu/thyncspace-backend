@@ -73,3 +73,38 @@ exactly `https://thyncspace.bg-labs.com`.
 
 See `docs/DEPLOYMENT.md`, `docs/EC2_PRODUCTION_REBUILD_GUIDE.md`, and
 `docs/FRESH_START_AND_GIT_SPLIT.md` after the repository split.
+
+## Note organization and recovery
+
+All new endpoints require a session; mutations retain origin/CSRF and rate limits.
+Organization, trash, and history are owner-only.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| PATCH | /api/notes/:noteId/organization | Set notebook (80 characters) and tags (20, each up to 40 characters). |
+| GET | /api/notes/trash | List the owner's deleted notes. |
+| GET | /api/notes/:noteId/history | List IDs/timestamps of the last five saved versions. |
+| POST | /api/notes/:noteId/recover | Restore trash, or pass versionId to recover a historical copy. |
+| DELETE | /api/notes/:noteId | Move to trash, remove sharing/favorites, disconnect live access. |
+
+Content changes atomically retain the prior title/content with the current Yjs
+state. History is capped at five snapshots to bound the MongoDB document size;
+it is recovery history, not an audit log. Unchanged title/content does not consume
+another version; generated board timestamps are ignored for this comparison. History and organization are omitted from collaborator responses.
+Trash has no automatic expiration or permanent-delete UI in this version.
+
+Recovery uses a MongoDB transaction and creates a fresh private note ID without
+old Yjs state, collaborators, or favorites. Restoring trash consumes the original
+tombstone in the same transaction. Historical recovery leaves the original live
+note untouched. Only server-saved content is recoverable; browser drafts remain
+a separate recovery path. The five-version history starts after this update.
+
+Existing records need no destructive migration: notebook/tags/history default
+to empty values. Back up MongoDB before rollout. Deploy backend before frontend;
+older frontends do not expose trash/history. Rolling back loses the new UI,
+not the stored snapshots. Do not resume permanent deletion without reviewing
+these semantics. The single collaboration process remains authoritative; this
+change does not add multi-instance synchronization or distributed mutation locks.
+
+Run `npm run check` for lint, types, build, and regression tests. Local watch mode
+uses Node 24's built-in watcher. See REVIEW-2026-10-12.md for review evidence.
