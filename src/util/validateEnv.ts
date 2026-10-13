@@ -3,6 +3,9 @@ import { cleanEnv } from "envalid";
 import { bool, num, port, str } from "envalid/dist/validators.js";
 
 const env = cleanEnv(process.env, {
+  AI_ACTIONS_ENABLED: bool({ default: false }),
+  OPENAI_API_KEY: str({ default: "" }),
+  OPENAI_AI_MODEL: str({ default: "" }),
   SMTP_HOST: str({ default: "" }),
   SMTP_PORT: port({ default: 587 }),
   SMTP_SECURE: bool({ default: false }),
@@ -170,5 +173,7 @@ if (env.MAIL_FROM) {
   try { validateEmail(env.MAIL_FROM); if (/[\r\n]/.test(env.SMTP_HOST)) throw new Error(); }
   catch { throw new Error("Invalid SMTP host or sender address"); }
 }
+
+if (env.AI_ACTIONS_ENABLED && (!env.OPENAI_API_KEY || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/.test(env.OPENAI_AI_MODEL))) throw new Error("AI actions require a server-side API key and a valid model ID");
 
 export default env;

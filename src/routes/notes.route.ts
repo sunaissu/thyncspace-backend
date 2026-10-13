@@ -1,3 +1,4 @@
+import * as Ai from "../controller/passageAi.js";
 import * as Notebooks from "../controller/sharedNotebooks.js";
 import * as Discussions from "../controller/discussions.js";
 import * as Embeds from "../controller/noteEmbeds.js";
@@ -45,6 +46,10 @@ const collaborationTokenLimiter = rateLimit({
 
 router.use(requireAuth, mutationLimiter);
 
+const aiAccountLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, keyGenerator: req => req.user!.id, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "You have reached the limit of five AI actions per hour" } });
+const aiWorkspaceLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 60, keyGenerator: () => "workspace", standardHeaders: "draft-8", legacyHeaders: false, message: { error: "The workspace AI limit was reached. Try again later" } });
+router.get("/ai-settings", Ai.aiSettings);
+router.post("/:noteId/ai", aiAccountLimiter, aiWorkspaceLimiter, Ai.passageAction);
 router.get("/notebooks", Notebooks.listNotebooks);
 router.post("/notebooks", creationLimiter, Notebooks.createNotebook);
 router.get("/notebooks/:notebookId", Notebooks.getNotebook);
