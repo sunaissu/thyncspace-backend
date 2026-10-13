@@ -263,3 +263,11 @@ GET/PATCH /api/notes/:noteId/embeds lists and manages up to 20 source-note refer
 Host owners/editors can add, remove or mark a source revision reviewed. A separate embedRevision compare-and-swap rejects concurrent metadata edits and rechecks host edit permission in the write query. Review actions also carry expectedSourceRevision, so a changed preview cannot be silently marked reviewed. Source content revision differences drive stale indicators; previews always return current content. No nested embed expansion runs on the server. Linked references are retained on private note recovery and in owner account exports; links to deleted or freshly restored source identities stay unavailable until explicitly relinked. Activity records metadata changes.
 
 Backend checks: 46 unit tests and 24 replica-set tests/subtests, covering viewer mutation rejection, hidden source titles/content, host/source revocation, changed source revisions, concurrent reviews and private host recovery.
+
+### Discussions and mentions
+
+THY-10 is implemented. GET /api/notes/discussions supports noteId, filter (all, unresolved, mentions, replies), and a cursor for 50-row pages. GET /api/notes/:noteId/discussions/:threadId returns the thread and current collaborator names. POST /api/notes/:noteId/discussions creates a thread; PATCH on the thread supports reply, edit, delete-post, resolve, reopen, and owner-confirmed remove. All writes require current owner/editor access. Viewers can read.
+
+Comments are plain text, limited to 4,000 characters, 10 mentions, 50 comments per thread, and 100 threads per note. Mentions must name current note members. Create/reply request IDs support retries after a lost response. Thread changes require expectedRevision; concurrent changes return 409. Transactions touch the host note to serialize writes with sharing changes and deletion. Inbox queries filter through current note access, use bounded pages, and have a five-second database limit. The inbox is in-app only; comments send no email.
+
+Trash recovery transfers discussions to the new private note. Version copies start without discussions. Permanent deletion removes discussions. Account exports include discussions on owned notes and only that account's comments elsewhere; deletion removes owned threads and scrubs the account's authorship, comment text, and mentions elsewhere.

@@ -1,3 +1,4 @@
+import Discussion from "../models/discussion.model.js";
 import Reminders from "../models/reminders.model.js";
 import Attachment from "../models/attachment.model.js";
 import AuthAction from "../models/authAction.model.js";
@@ -33,6 +34,10 @@ export async function* accountExport(owner: string) {
   try {
     for await (const note of notes) yield line("ownedNote", { ...toNoteResponse(note, owner), history: note.history, activity: note.activity });
   } finally { await notes.close(); }
+  const ownedIds = await Note.find({ owner }).distinct("_id").exec();
+  const discussions = Discussion.find({ $or: [{ noteId: { $in: ownedIds } }, { "posts.authorId": owner }] }).select("+posts -__v").cursor();
+  const ownedSet = new Set(ownedIds.map(String));
+  try { for await (const thread of discussions) yield line("discussion", { id: thread.id, noteId: thread.noteId, resolved: thread.resolved, posts: thread.posts.filter(post => ownedSet.has(String(thread.noteId)) || post.authorId === owner) }); } finally { await discussions.close(); }
   // Export only this account's current membership, not somebody else's content.
   const memberships = Note.find({ owner: { $ne: owner }, status: "active", "sharedWith.userId": owner }).select("title sharedWith").cursor();
   try {

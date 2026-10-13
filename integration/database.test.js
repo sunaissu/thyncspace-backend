@@ -21,10 +21,10 @@ const { default: Workspace } = await import('../dist/models/workspace.model.js')
 const { collaborationServer, shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
 const owner = new mongoose.Types.ObjectId().toString();
 const stranger = new mongoose.Types.ObjectId().toString();
-async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, attachmentId, sourceId, query = {}, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
+async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, attachmentId, sourceId, threadId, query = {}, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
  const result = {};
  const response = { status(code) { result.status = code; return this; }, json(body) { result.body = body; return this; }, sendStatus(code) { result.status = code; return this; } };
- await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId, attachmentId, sourceId }, query, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
+ await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId, attachmentId, sourceId, threadId }, query, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
  return result;
 }
 
@@ -95,6 +95,71 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.ifError((await invoke(workspace.updateWorkspace, { body: { action: 'clear-recent' } })).error);
    assert.deepEqual((await invoke(workspace.getWorkspace)).body.recent, []);
    await Note.deleteMany({ _id: { $in: [own.id, shared.id, hidden.id] } });
+  });
+  await t.test('discussions serialize replies, enforce membership and preserve privacy through recovery', async () => {
+   const api = await import('../dist/controller/discussions.js'), { default: Thread } = await import('../dist/models/discussion.model.js');
+   const { randomUUID } = await import('node:crypto'); await Thread.init();
+   const editor = await TestUser.create({ username: 'Comment editor', email: 'comment-editor@example.test' });
+   const viewer = await TestUser.create({ username: 'Comment viewer', email: 'comment-viewer@example.test' });
+   const host = await Note.create({ owner, title: 'Discussion host', sharedWith: [{ userId: editor.id, permission: 'editor' }, { userId: viewer.id, permission: 'viewer' }] });
+   const create = { action: 'create', id: randomUUID(), body: '<img src=x onerror=alert(1)> first comment', mentions: [editor.id] };
+   assert.equal((await invoke(api.changeDiscussion, { noteId: host.id, userId: viewer.id, body: create })).error?.status, 404);
+   assert.equal((await invoke(api.changeDiscussion, { noteId: host.id, body: { ...create, mentions: [stranger] } })).error?.status, 400);
+   const created = await Promise.all([1, 2].map(() => invoke(api.changeDiscussion, { noteId: host.id, body: create }))); created.forEach(value => assert.ifError(value.error));
+   const id = created[0].body.id; assert.equal(created[1].body.id, id); assert.equal(await Thread.countDocuments({ noteId: host.id }), 1);
+   assert.equal((await invoke(api.changeDiscussion, { noteId: host.id, body: { ...create, body: 'Changed retry' } })).error?.status, 409);
+   const read = () => invoke(api.getDiscussion, { noteId: host.id, threadId: id });
+   let value = await read(); assert.ifError(value.error); assert.equal(value.body.posts[0].author, 'Schedule owner'); assert.equal(JSON.stringify(value.body).includes('@example.test'), false);
+   assert.equal((await invoke(api.getDiscussion, { noteId: host.id, threadId: id, userId: stranger })).error?.status, 404);
+   assert.equal((await invoke(api.listDiscussions, { userId: editor.id, query: { filter: 'mentions' } })).body.entries[0].id, id);
+   assert.equal((await invoke(api.listDiscussions, { userId: stranger, query: { filter: 'all' } })).body.entries.length, 0);
+   const reply = { action: 'reply', id: randomUUID(), expectedRevision: 0, body: 'Reply from editor', mentions: [owner] };
+   const results = await Promise.all([reply, { ...reply, id: randomUUID(), body: 'Concurrent reply' }].map(body => invoke(api.changeDiscussion, { noteId: host.id, threadId: id, userId: editor.id, body })));
+   assert.equal(results.filter(value => !value.error).length, 1); assert.equal(results.find(value => value.error).error.status, 409);
+   value = await read(); assert.equal(value.body.posts.length, 2); const saved = value.body.posts[1];
+   assert.ifError((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, userId: editor.id, body: { ...reply, id: saved.id, body: saved.body } })).error);
+   assert.equal((await read()).body.posts.length, 2);
+   assert.equal((await invoke(api.listDiscussions, { query: { filter: 'replies' } })).body.entries.some(entry => entry.id === id), true);
+   assert.equal((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, body: { action: 'edit', expectedRevision: 1, id: saved.id, body: 'Impersonation', mentions: [] } })).error?.status, 404);
+   assert.ifError((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, body: { action: 'resolve', expectedRevision: 1 } })).error);
+   assert.equal((await invoke(api.listDiscussions, { query: { noteId: host.id, filter: 'unresolved' } })).body.entries.length, 0);
+   assert.equal((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, userId: editor.id, body: { ...reply, id: randomUUID(), expectedRevision: 2 } })).error?.status, 409);
+   assert.ifError((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, body: { action: 'reopen', expectedRevision: 2 } })).error);
+   assert.ifError((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, userId: editor.id, body: { action: 'edit', expectedRevision: 3, id: saved.id, body: 'Edited by its author', mentions: [owner] } })).error);
+   assert.equal((await read()).body.posts[1].body, 'Edited by its author');
+   await Note.updateOne({ _id: host.id }, { $pull: { sharedWith: { userId: editor.id } } });
+   assert.equal((await invoke(api.getDiscussion, { noteId: host.id, threadId: id, userId: editor.id })).error?.status, 404);
+   assert.equal((await invoke(api.listDiscussions, { userId: editor.id, query: { filter: 'replies' } })).body.entries.length, 0);
+   await Note.updateOne({ _id: host.id }, { $set: { status: 'trashed', sharedWith: [] } });
+   const recovered = await invoke(library.recoverNote, { noteId: host.id }); assert.ifError(recovered.error);
+   const restoredId = String(recovered.body._id); assert.equal(String((await Thread.findById(id)).noteId), restoredId);
+   const { accountExport } = await import('../dist/services/accountExport.js'); let ownExport = '', contributorExport = '';
+   for await (const line of accountExport(owner)) ownExport += line;
+   for await (const line of accountExport(editor.id)) contributorExport += line;
+   assert.match(ownExport, /Edited by its author/); assert.match(contributorExport, /Edited by its author/); assert.equal(contributorExport.includes('first comment'), false);
+   const privacy = await import('../dist/controller/privacy.js'), { fulfillDeletionRequest } = await import('../dist/services/accountDeletion.js');
+   const request = await invoke(privacy.changeDeletionRequest, { userId: editor.id, body: { confirmation: editor.username } });
+   assert.ifError(request.error); await fulfillDeletionRequest(request.body.id, editor.username);
+   const scrubbed = await invoke(api.getDiscussion, { noteId: restoredId, threadId: id }); assert.ifError(scrubbed.error); assert.equal(scrubbed.body.posts[1].body, ''); assert.equal(scrubbed.body.posts[1].authorId, ''); assert.equal(scrubbed.body.posts[0].mentions.length, 0);
+   await Note.updateOne({ _id: restoredId }, { $set: { status: 'trashed' } });
+   assert.ifError((await invoke(library.permanentlyDeleteTrash, { noteId: restoredId, body: { confirmation: restoredId } })).error); assert.equal(await Thread.countDocuments({ noteId: restoredId }), 0);
+   await TestUser.deleteOne({ _id: viewer.id });
+  });
+  await t.test('discussion limits and inbox pagination remain bounded under concurrent creation', async () => {
+   const api = await import('../dist/controller/discussions.js'), { default: Thread } = await import('../dist/models/discussion.model.js'), { randomUUID } = await import('node:crypto');
+   const host = await Note.create({ owner, title: 'Bounded discussions' });
+   await Thread.insertMany(Array.from({ length: 99 }, () => ({ noteId: host.id, clientId: randomUUID(), fingerprint: 'fixture', posts: [{ id: randomUUID(), authorId: owner, body: 'Existing', createdAt: new Date() }] })));
+   const results = await Promise.all([1, 2].map(() => invoke(api.changeDiscussion, { noteId: host.id, body: { action: 'create', id: randomUUID(), body: 'At the limit', mentions: [] } })));
+   assert.equal(results.filter(value => !value.error).length, 1); assert.equal(results.find(value => value.error).error.status, 409);
+   assert.equal(await Thread.countDocuments({ noteId: host.id }), 100);
+   let page = await invoke(api.listDiscussions, { query: { noteId: host.id, filter: 'all' } }); assert.ifError(page.error); assert.equal(page.body.entries.length, 50); assert.ok(page.body.nextCursor);
+   const ids = new Set(page.body.entries.map(entry => entry.id)); page = await invoke(api.listDiscussions, { query: { noteId: host.id, filter: 'all', cursor: page.body.nextCursor } }); assert.equal(page.body.entries.length, 50); assert.equal(page.body.nextCursor, null); assert.equal(page.body.entries.some(entry => ids.has(entry.id)), false);
+   const id = results.find(value => !value.error).body.id;
+   await Thread.updateOne({ _id: id }, { $set: { posts: Array.from({ length: 50 }, () => ({ id: randomUUID(), authorId: owner, body: 'At limit', createdAt: new Date() })) } });
+   assert.equal((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, body: { action: 'reply', expectedRevision: 0, id: randomUUID(), body: 'Too many', mentions: [] } })).error?.status, 409);
+   assert.equal((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, body: { action: 'remove', expectedRevision: 0 } })).error?.status, 403);
+   assert.ifError((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, body: { action: 'remove', expectedRevision: 0, confirmation: id } })).error);
+   await Thread.deleteMany({ noteId: host.id }); await Note.deleteOne({ _id: host.id });
   });
   let noteId;
   await t.test('bulk import returns the committed notes in input order', async () => {

@@ -1,3 +1,4 @@
+import Discussion from "../models/discussion.model.js";
 import Attachment from "../models/attachment.model.js";
 import { copyAttachmentReferences } from "../services/attachments.js";
 import { activityEntry, activityPush } from "../util/noteActivity.js";
@@ -132,6 +133,7 @@ export const recoverNote: RequestHandler = async (req, res, next) => {
           const [copy] = await NoteModel.create([input], { session });
           await copyAttachmentReferences(noteId, String(input._id), !versionId, session);
           if (!versionId) {
+            await Discussion.updateMany({ noteId }, { $set: { noteId: input._id } }, { session }).exec();
             await Daily.updateOne({ owner: userId, noteId }, { $set: { noteId: input._id } }, { session }).exec();
             const result = await NoteModel.deleteOne({ _id: noteId, owner: userId, status: NoteStatus.Trashed }, { session }).exec();
             if (result.deletedCount !== 1) throw createHttpError(409, "This note was already restored");
@@ -182,6 +184,7 @@ export const permanentlyDeleteTrash: RequestHandler = async (req, res, next) => 
         await session.withTransaction(async () => {
           const result = await NoteModel.deleteOne({ _id: noteId, owner: userId, status: NoteStatus.Trashed }, { session }).exec();
           if (result.deletedCount !== 1) throw createHttpError(404, "Trashed note not found");
+          await Discussion.deleteMany({ noteId }, { session }).exec();
           await Attachment.updateMany({ references: noteId }, { $pull: { references: noteId } }, { session }).exec();
         });
       } finally { await session.endSession(); }

@@ -1,3 +1,4 @@
+import * as Discussions from "../controller/discussions.js";
 import * as Embeds from "../controller/noteEmbeds.js";
 import * as Reminders from "../controller/reminders.js";
 import { getNoteActivity } from "../controller/noteActivity.js";
@@ -43,6 +44,10 @@ const collaborationTokenLimiter = rateLimit({
 
 router.use(requireAuth, mutationLimiter);
 
+router.get("/discussions", Discussions.listDiscussions);
+router.get("/:noteId/discussions/:threadId", Discussions.getDiscussion);
+router.post("/:noteId/discussions", Discussions.changeDiscussion);
+router.patch("/:noteId/discussions/:threadId", Discussions.changeDiscussion);
 router.get("/reminders", Reminders.listReminders);
 router.patch("/reminders", Reminders.updateReminders);
 router.get("/", NoteController.getNotes);
