@@ -21,10 +21,10 @@ const { default: Workspace } = await import('../dist/models/workspace.model.js')
 const { collaborationServer, shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
 const owner = new mongoose.Types.ObjectId().toString();
 const stranger = new mongoose.Types.ObjectId().toString();
-async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, attachmentId, sourceId, threadId, query = {}, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
+async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, attachmentId, sourceId, threadId, notebookId, query = {}, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
  const result = {};
  const response = { status(code) { result.status = code; return this; }, json(body) { result.body = body; return this; }, sendStatus(code) { result.status = code; return this; } };
- await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId, attachmentId, sourceId, threadId }, query, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
+ await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId, attachmentId, sourceId, threadId, notebookId }, query, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
  return result;
 }
 
@@ -160,6 +160,52 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.equal((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, body: { action: 'remove', expectedRevision: 0 } })).error?.status, 403);
    assert.ifError((await invoke(api.changeDiscussion, { noteId: host.id, threadId: id, body: { action: 'remove', expectedRevision: 0, confirmation: id } })).error);
    await Thread.deleteMany({ noteId: host.id }); await Note.deleteOne({ _id: host.id });
+  });
+  await t.test('shared notebooks inherit permissions atomically and detach without deleting content', async () => {
+   const api = await import('../dist/controller/sharedNotebooks.js'), { default: Notebook } = await import('../dist/models/sharedNotebook.model.js'), { randomUUID } = await import('node:crypto'); await Notebook.init();
+   const member = await TestUser.create({ username: 'Notebook member', email: 'notebook-member@example.test' });
+   const doc = await Note.create({ owner, title: 'Notebook document', content: 'Private source' }), board = await Note.create({ owner, title: 'Notebook board', type: 'whiteboard', content: JSON.stringify({ elements: [], viewport: { panX: 0, panY: 0, zoom: 1 } }) });
+   const create = { id: randomUUID(), name: 'Research' }, created = await invoke(api.createNotebook, { body: create }); assert.ifError(created.error); const id = created.body.id;
+   assert.equal((await invoke(api.createNotebook, { body: create })).body.id, id); assert.equal(await Notebook.countDocuments({ owner }), 1);
+   const change = body => invoke(api.changeNotebook, { notebookId: id, body }), get = () => invoke(api.getNotebook, { notebookId: id });
+   assert.equal((await invoke(api.getNotebook, { notebookId: id, userId: stranger })).error?.status, 404);
+   assert.equal((await invoke(api.changeNotebook, { notebookId: id, userId: stranger, body: { action: 'rename', name: 'Stolen', expectedRevision: 0 } })).error?.status, 404);
+   assert.equal((await change({ action: 'attach', noteId: doc.id, expectedRevision: 0, expectedContentRevision: 1 })).error?.status, 409);
+   assert.ifError((await change({ action: 'attach', noteId: doc.id, expectedRevision: 0, expectedContentRevision: 0 })).error);
+   assert.ifError((await change({ action: 'attach', noteId: board.id, expectedRevision: 1, expectedContentRevision: 0 })).error);
+   assert.equal((await change({ action: 'member', identifier: member.email, permission: 'editor', expectedRevision: 2 })).error?.status, 400);
+   assert.ifError((await change({ action: 'member', identifier: member.username, permission: 'editor', expectedRevision: 2 })).error);
+   for (const note of [doc, board]) { const value = await invoke(notes.getNote, { noteId: note.id, userId: member.id }); assert.ifError(value.error); assert.equal(value.body.sharedWith[0].permission, 'editor'); assert.equal(String(value.body.sharedNotebookId), id); }
+   assert.equal((await invoke(notes.shareNote, { noteId: doc.id, body: { identifier: member.username, permission: 'viewer' } })).error?.status, 409);
+   assert.equal((await invoke(notes.unshareNote, { noteId: doc.id, targetUserId: member.id })).error?.status, 409);
+   assert.equal((await invoke(notes.updatePrivateNote, { noteId: doc.id, body: { text: 'Private overwrite', expectedRevision: 0 } })).error?.status, 409);
+   let values = await Promise.all(['viewer', 'editor'].map(permission => change({ action: 'member', memberId: member.id, permission, expectedRevision: 3 }))); assert.equal(values.filter(value => !value.error).length, 1); assert.equal(values.find(value => value.error).error.status, 409);
+   const permission = (await get()).body.members[0].permission; for (const note of [doc, board]) assert.equal((await Note.findById(note.id)).sharedWith[0].permission, permission);
+   const list = await invoke(api.listNotebooks, { userId: member.id }); assert.equal(list.body.entries[0].id, id); assert.equal(list.body.entries[0].noteCount, 2); assert.equal(JSON.stringify(list.body).includes('@example.test'), false);
+   assert.ifError((await change({ action: 'detach', noteId: doc.id, expectedRevision: 4 })).error); assert.equal((await Note.findById(doc.id)).sharedWith.length, 0); assert.equal((await Note.findById(doc.id)).content, 'Private source');
+   assert.equal((await invoke(notes.getNote, { noteId: doc.id, userId: member.id })).error?.status, 403);
+   assert.ifError((await change({ action: 'remove-member', memberId: member.id, expectedRevision: 5 })).error); assert.equal((await invoke(api.getNotebook, { notebookId: id, userId: member.id })).error?.status, 404);
+   assert.ifError((await change({ action: 'member', identifier: member.username, permission: 'viewer', expectedRevision: 6 })).error);
+   assert.ifError((await invoke(notes.deleteNote, { noteId: board.id })).error); assert.equal((await Note.findById(board.id)).sharedNotebookId, null);
+   assert.equal((await get()).body.notes.length, 0); const restored = await invoke(library.recoverNote, { noteId: board.id }); assert.ifError(restored.error); assert.equal(restored.body.sharedNotebookId, null); assert.equal(restored.body.sharedWith.length, 0);
+   assert.ifError((await change({ action: 'attach', noteId: doc.id, expectedRevision: 7, expectedContentRevision: 0 })).error);
+   const { accountExport } = await import('../dist/services/accountExport.js'); let exportText = ''; for await (const line of accountExport(member.id)) exportText += line; assert.match(exportText, /sharedNotebook/); assert.equal(exportText.includes('Private source'), false);
+   const privacy = await import('../dist/controller/privacy.js'), { fulfillDeletionRequest } = await import('../dist/services/accountDeletion.js'); const request = await invoke(privacy.changeDeletionRequest, { userId: member.id, body: { confirmation: member.username } }); assert.ifError(request.error); await fulfillDeletionRequest(request.body.id, member.username);
+   assert.equal((await get()).body.members.length, 0); assert.equal((await Note.findById(doc.id)).sharedWith.length, 0);
+   assert.equal((await change({ action: 'delete', expectedRevision: 9 })).error?.status, 400);
+   assert.ifError((await change({ action: 'delete', expectedRevision: 9, confirmation: id })).error); assert.equal(await Notebook.countDocuments({ owner }), 0); assert.equal((await Note.findById(doc.id)).content, 'Private source');
+   await Note.deleteMany({ _id: { $in: [doc.id, restored.body._id] } });
+  });
+  await t.test('owned notebook slots and contained note limits cannot be exceeded', async () => {
+   const api = await import('../dist/controller/sharedNotebooks.js'), { default: Notebook } = await import('../dist/models/sharedNotebook.model.js'), { randomUUID } = await import('node:crypto');
+   const results = await Promise.all(Array.from({ length: 21 }, (_, index) => invoke(api.createNotebook, { body: { id: randomUUID(), name: 'Limit ' + index } })));
+   assert.equal(results.filter(value => !value.error).length, 20); assert.equal(results.find(value => value.error).error.status, 409); assert.equal(await Notebook.countDocuments({ owner }), 20);
+   const id = results.find(value => !value.error).body.id;
+   const contained = await Note.insertMany(Array.from({ length: 100 }, (_, index) => ({ owner, title: 'Contained ' + index, sharedNotebookId: id })));
+   const extra = await Note.create({ owner, title: 'Overflow' });
+   assert.equal((await invoke(api.changeNotebook, { notebookId: id, body: { action: 'attach', expectedRevision: 0, noteId: extra.id, expectedContentRevision: 0 } })).error?.status, 409);
+   assert.equal((await Note.findById(extra.id)).sharedNotebookId, null); assert.equal((await Notebook.findById(id)).revision, 0);
+   await Note.deleteMany({ _id: { $in: [...contained.map(note => note._id), extra._id] } }); await Notebook.deleteMany({ owner });
   });
   let noteId;
   await t.test('bulk import returns the committed notes in input order', async () => {

@@ -1,3 +1,4 @@
+import SharedNotebook from "../models/sharedNotebook.model.js";
 import Discussion from "../models/discussion.model.js";
 import Reminders from "../models/reminders.model.js";
 import Attachment from "../models/attachment.model.js";
@@ -40,6 +41,8 @@ export async function fulfillDeletionRequest(requestId: string, username: string
       await Discussion.updateMany({ "posts.0.authorId": owner }, { $set: { fingerprint: "" } }, { session }).exec();
       await Discussion.updateMany({ "posts.authorId": owner }, { $set: { "posts.$[post].authorId": "", "posts.$[post].body": "", "posts.$[post].mentions": [], "posts.$[post].deleted": true }, $inc: { revision: 1 } }, { session, arrayFilters: [{ "post.authorId": owner }] }).exec();
       await Discussion.updateMany({ "posts.mentions": owner }, { $pull: { "posts.$[].mentions": owner }, $inc: { revision: 1 } }, { session }).exec();
+      await SharedNotebook.deleteMany({ owner }, { session }).exec();
+      await SharedNotebook.updateMany({ "members.userId": owner }, { $pull: { members: { userId: owner } }, $inc: { revision: 1 } }, { session }).exec();
       await Note.deleteMany({ owner }, { session }).exec();
       await Workspace.updateMany({ owner: { $ne: owner }, $or: [{ pinned: { $in: ids } }, { "recent.noteId": { $in: ids } }] }, { $pull: { pinned: { $in: ids }, recent: { noteId: { $in: ids } } }, $inc: { revision: 1 } }, { session }).exec();
       await Reminders.deleteOne({ owner }, { session }).exec();

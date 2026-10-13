@@ -222,6 +222,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
     await assertActiveDeviceSession(payload.sessionHash, payload.userId);
     const { permission, note } = await getAccess(documentName, payload.userId);
     connection.readOnly = permission !== PermissionLevel.Editor;
+    connection.sendStateless(JSON.stringify({ type: "note-permission", permission }));
     context.noteType = note.type;
     context.expiresAt = payload.expiresAt;
     context.lastAccessCheck = Date.now();
@@ -237,6 +238,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
       context.lastAccessCheck = Date.now();
       context.permission = permission;
       connection.readOnly = permission !== PermissionLevel.Editor;
+      connection.sendStateless(JSON.stringify({ type: "note-permission", permission }));
     }
     if ((type === 1 || type === 2) && !connection.readOnly) {
       if (!context.noteType) throw new Error("Unknown note type");
@@ -443,6 +445,7 @@ export const updateCollaboratorPermission = (
     context.lastAccessCheck = Date.now();
     context.permission = permission;
     connection.readOnly = permission !== PermissionLevel.Editor;
+    connection.sendStateless(JSON.stringify({ type: "note-permission", permission }));
   });
 };
 
@@ -559,6 +562,7 @@ const revalidateActiveConnections = async () => {
           context.lastAccessCheck = Date.now();
           context.permission = permission as PermissionLevel;
           connection.readOnly = permission !== PermissionLevel.Editor;
+          connection.sendStateless(JSON.stringify({ type: "note-permission", permission }));
         });
       } catch (error) {
         console.error(`Could not recheck collaboration access for ${noteId}`, error);

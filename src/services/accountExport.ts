@@ -1,3 +1,4 @@
+import SharedNotebook from "../models/sharedNotebook.model.js";
 import Discussion from "../models/discussion.model.js";
 import Reminders from "../models/reminders.model.js";
 import Attachment from "../models/attachment.model.js";
@@ -28,6 +29,8 @@ export async function* accountExport(owner: string) {
   yield line("reminders", await Reminders.findOne({ owner }).select("-__v").lean().exec());
   yield line("workspace", await Workspace.findOne({ owner }).select("-__v").lean().exec());
   yield line("deletionRequest", await PrivacyRequest.findOne({ owner }).select("-__v").lean().exec());
+  const notebooks = SharedNotebook.find({ $or: [{ owner }, { "members.userId": owner }] }).select("-__v").cursor();
+  try { for await (const book of notebooks) yield line("sharedNotebook", { id: book.id, name: book.name, owner: book.owner, members: book.members.filter(member => String(book.owner) === owner || String(member.userId) === owner) }); } finally { await notebooks.close(); }
   const attachments = Attachment.find({ owner }).select("+data +ocrText").cursor();
   try { for await (const file of attachments) yield line("attachment", { id: file.id, name: file.name, mime: file.mime, bytes: file.bytes, references: file.references, ocrText: file.ocrText, indexedAt: file.indexedAt, data: file.data.toString("base64") }); } finally { await attachments.close(); }
   const notes = Note.find({ owner }).select("+history +activity").sort({ _id: 1 }).cursor();

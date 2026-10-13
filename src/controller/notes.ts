@@ -356,7 +356,7 @@ export const deleteNote: RequestHandler = async (req, res, next) => {
 
       await flushNoteState(noteId);
       await NoteModel.updateOne({ _id: noteId, owner: userId, status: NoteStatus.Active },
-        { $set: { status: NoteStatus.Trashed, trashedAt: new Date() }, $unset: { sharedWith: 1, favoritedBy: 1 }, $push: { activity: activityPush(activityEntry("trash", userId)) } }).exec();
+        { $set: { status: NoteStatus.Trashed, trashedAt: new Date() }, $unset: { sharedWith: 1, favoritedBy: 1, sharedNotebookId: 1 }, $push: { activity: activityPush(activityEntry("trash", userId)) } }).exec();
       disconnectNote(noteId);
       await invalidateOwnedNotesCache(note.owner.toString());
     });
@@ -478,6 +478,7 @@ export const shareNote: RequestHandler = async (req, res, next) => {
       noteId,
       async () => {
         const note = await getOwnedNote(noteId, ownerId);
+        if (note.sharedNotebookId) throw createHttpError(409, "This note inherits notebook membership. Use Shared notebooks to manage access or detach it first");
         const existing = note.sharedWith.find(
           (entry) => entry.userId.toString() === resolvedCollaborator.id,
         );
@@ -549,6 +550,7 @@ export const unshareNote: RequestHandler = async (req, res, next) => {
     const ownerId = getUserId(req);
     await withNoteMutationLock(noteId, async () => {
       const note = await getOwnedNote(noteId, ownerId);
+      if (note.sharedNotebookId) throw createHttpError(409, "This note inherits notebook membership. Use Shared notebooks to manage access or detach it first");
       const previousLength = note.sharedWith.length;
       note.sharedWith = note.sharedWith.filter(
         (entry) => entry.userId.toString() !== collaboratorId,

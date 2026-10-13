@@ -1,3 +1,4 @@
+import * as Notebooks from "../controller/sharedNotebooks.js";
 import * as Discussions from "../controller/discussions.js";
 import * as Embeds from "../controller/noteEmbeds.js";
 import * as Reminders from "../controller/reminders.js";
@@ -44,6 +45,10 @@ const collaborationTokenLimiter = rateLimit({
 
 router.use(requireAuth, mutationLimiter);
 
+router.get("/notebooks", Notebooks.listNotebooks);
+router.post("/notebooks", creationLimiter, Notebooks.createNotebook);
+router.get("/notebooks/:notebookId", Notebooks.getNotebook);
+router.patch("/notebooks/:notebookId", Notebooks.changeNotebook);
 router.get("/discussions", Discussions.listDiscussions);
 router.get("/:noteId/discussions/:threadId", Discussions.getDiscussion);
 router.post("/:noteId/discussions", Discussions.changeDiscussion);
