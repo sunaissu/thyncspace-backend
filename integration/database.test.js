@@ -407,7 +407,9 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    const { default: AttachmentQuota } = await import('../dist/models/attachmentQuota.model.js');
    const { storeAttachment } = await import('../dist/services/attachments.js');
    await Promise.all([Reminders.init(), Attachment.init(), AttachmentQuota.init()]);
+   const { default: MetricDay } = await import('../dist/models/metricDay.model.js'); const metrics = await import('../dist/services/productMetrics.js'); await MetricDay.init();
    const account = await User.create({ username: 'Privacy owner', email: 'privacy@example.test' });
+   await metrics.setMetricsConsent(account.id, true, 0); await metrics.recordMetric(account.id, 'note_created'); const metricSubject = (await User.findById(account.id).select('+metricsSubject')).metricsSubject;
    const userId = account.id;
    await UserAuth.create({ userId, password: 'password-hash-must-not-export', googleId: 'oauth-id-must-not-export' });
    const own = await Note.create({ owner: userId, title: 'Export board', type: 'whiteboard', content: '{"elements":[]}', history: [{ title: 'Prior', content: 'retained', savedAt: new Date() }], sharedWith: [{ userId: owner, permission: 'editor' }], generationKey: 'hidden-generation' });
@@ -428,6 +430,7 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.equal(Buffer.from(lines.find(line => line.kind === 'attachment').data.data, 'base64').toString(), 'owned-file-bytes');
    assert.equal(lines.find(line => line.kind === 'attachment').data.hash, undefined);
    assert.equal(lines.find(line => line.kind === 'profile').data.email, 'privacy@example.test');
+   assert.equal(lines.find(line => line.kind === 'usageConsent').data.enabled, true); assert.equal(lines.find(line => line.kind === 'usageCounts').data[0].counters.note_created, 1); assert.equal(JSON.stringify(lines).includes(metricSubject), false);
    assert.equal(lines.find(line => line.kind === 'ownedNote').data.history[0].content, 'retained');
    assert.equal(lines.filter(line => line.kind === 'ownedNote').length, 1);
    assert.equal(lines.find(line => line.kind === 'sharedMembership').data.permission, 'viewer');
@@ -438,7 +441,7 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.equal((await invoke(privacy.changeDeletionRequest, { userId, body: { confirmation: 'Privacy owner' } })).body.status, 'pending');
    await assert.rejects(fulfillDeletionRequest(requests[0].body.id, 'wrong'), /does not match/);
    const result = await fulfillDeletionRequest(requests[0].body.id, 'Privacy owner');
-   assert.equal(result.owner, userId);
+   assert.equal(result.owner, userId); assert.equal(await MetricDay.countDocuments({ subject: metricSubject }), 0);
    assert.equal(await Reminders.countDocuments({ owner: userId }), 0);
    assert.equal(await Attachment.countDocuments({ owner: userId }), 0);
    assert.equal(await AttachmentQuota.countDocuments({ owner: userId }), 0);

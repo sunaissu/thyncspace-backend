@@ -2,6 +2,10 @@ import { InferSchemaType, model, Schema } from "mongoose";
 
 const userSchema = new Schema(
   {
+    metricsEnabled: { type: Boolean, default: false, select: false },
+    metricsSubject: { type: String, default: "", select: false },
+    metricsRevision: { type: Number, default: 0, select: false },
+    metricsSequence: { type: Number, default: 0, select: false },
     suspendedAt: { type: Date, default: null, select: false },
     accessHistory: { type: [{ _id: false, at: Date, action: String, actor: String, reason: String }], default: [], select: false },
     credentialVersion: { type: Number, default: 0, min: 0 },

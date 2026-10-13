@@ -1,3 +1,4 @@
+import { metricsConsent } from '../controller/productMetrics.js'
 import express from 'express'
 import rateLimit from 'express-rate-limit'
 import * as Privacy from '../controller/privacy.js'
@@ -8,6 +9,8 @@ import { listDeviceSessions, revokeDeviceSession } from '../controller/deviceSes
 const router = express.Router()
 
 const privacyLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: 'draft-8', legacyHeaders: false, keyGenerator: req => req.user!.id, message: { error: 'Too many privacy requests; try again later.' } })
+router.get('/privacy/metrics', requireAuth, metricsConsent)
+router.patch('/privacy/metrics', requireAuth, privacyLimiter, metricsConsent)
 router.get('/privacy/export', requireAuth, privacyLimiter, Privacy.exportAccount)
 router.get('/privacy/deletion', requireAuth, Privacy.getDeletionRequest)
 router.post('/privacy/deletion', requireAuth, privacyLimiter, Privacy.changeDeletionRequest)

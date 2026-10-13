@@ -1,3 +1,4 @@
+import MetricDay from "../models/metricDay.model.js";
 import CompanionGrant from "../models/companionGrant.model.js";
 import { ArchiveImport, ArchiveItem } from "../models/archiveImport.model.js";
 import SharedNotebook from "../models/sharedNotebook.model.js";
@@ -27,6 +28,9 @@ export async function* accountExport(owner: string) {
   const line = (kind: string, data: unknown) => { count++; return JSON.stringify({ kind, data }) + "\n"; };
   yield line("manifest", { format: "thyncspace-account", version: 1, startedAt: new Date().toISOString(), consistency: "Each record reflects its read time. Save pending edits before exporting." });
   yield line("profile", profile);
+  const consent = await User.findById(owner).select("+metricsEnabled +metricsRevision +metricsSubject").lean().exec();
+  yield line("usageConsent", { enabled: consent?.metricsEnabled === true, revision: consent?.metricsRevision ?? 0 });
+  if (consent?.metricsSubject) yield line("usageCounts", await MetricDay.find({ subject: consent.metricsSubject, expiresAt: { $gt: new Date() } }).select("day counters total expiresAt -_id").sort({ day: 1 }).lean().exec());
   yield line("companionConnections", await CompanionGrant.find({ owner }).select("name noteIds attachments lastUsedAt expiresAt createdAt").lean().exec());
   yield line("archiveImport", await ArchiveImport.findById(owner).select("-__v").lean().exec());
   const staged = ArchiveItem.find({ owner }).select("+payload -__v").cursor();

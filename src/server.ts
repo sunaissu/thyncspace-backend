@@ -1,3 +1,4 @@
+import MetricDay from "./models/metricDay.model.js";
 import { summarizeError } from "./util/errorLogging.js";
 import CompanionGrant from "./models/companionGrant.model.js";
 import { ArchiveImport, ArchiveItem } from "./models/archiveImport.model.js";
@@ -82,7 +83,7 @@ mongoose
   })
   .then(async () => {
     // Unique indexes must exist before concurrent first-session/preference writes.
-    await Promise.all([CompanionGrant.init(), ArchiveImport.init(), ArchiveItem.init(), SharedNotebook.init(), Discussion.init(), Reminders.init(), DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init(), AuthAction.init(), AuthMail.init(), User.init(), UserAuth.init(), Attachment.init(), AttachmentQuota.init()]);
+    await Promise.all([MetricDay.init(), CompanionGrant.init(), ArchiveImport.init(), ArchiveItem.init(), SharedNotebook.init(), Discussion.init(), Reminders.init(), DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init(), AuthAction.init(), AuthMail.init(), User.init(), UserAuth.init(), Attachment.init(), AttachmentQuota.init()]);
     void connectCache();
     startNoteScheduler();
     startAuthMailWorker();

@@ -1,3 +1,4 @@
+import MetricDay from "../models/metricDay.model.js";
 import CompanionGrant from "../models/companionGrant.model.js";
 import { ArchiveImport, ArchiveItem } from "../models/archiveImport.model.js";
 import SharedNotebook from "../models/sharedNotebook.model.js";
@@ -29,7 +30,7 @@ export async function fulfillDeletionRequest(requestId: string, username: string
       const request = await PrivacyRequest.findOne({ _id: requestId, status: "pending" }).session(session).exec();
       if (!request) throw createHttpError(409, "Request is missing or cancelled");
       owner = String(request.owner);
-      const user = await User.findById(owner).select("+email").session(session).exec();
+      const user = await User.findById(owner).select("+email +metricsSubject").session(session).exec();
       if (!user || user.username !== username) throw createHttpError(409, "The account name does not match; review the request again");
       const ids = (await Note.find({ owner }).select("_id").session(session).lean().exec()).map(note => String(note._id));
       affectedOwners = (await Note.distinct("owner", { $or: [{ "sharedWith.userId": owner }, { favoritedBy: owner }] }).session(session).exec()).map(String);
@@ -60,6 +61,7 @@ export async function fulfillDeletionRequest(requestId: string, username: string
       await AuthAction.deleteMany({ userId: owner }, { session }).exec();
       await AuthMail.deleteMany({ emailKey: emailKey(user.email) }, { session }).exec();
       await UserAuth.deleteOne({ userId: owner }, { session }).exec();
+      if (user.metricsSubject) await MetricDay.deleteMany({ subject: user.metricsSubject }, { session }).exec();
       await User.deleteOne({ _id: owner }, { session }).exec();
       await PrivacyRequest.deleteOne({ _id: requestId, status: "pending" }, { session }).exec();
     });
