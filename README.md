@@ -249,3 +249,9 @@ Validation: 46 unit tests and 21 replica-set integration tests/subtests pass, in
 ### Image search indexing
 
 GET/PUT /api/attachments/:attachmentId/index is owner-only. Saving requires consent:true, the current expectedRevision, and text of at most 50,000 characters without NUL. Only PNG/JPEG/WebP attachments accept an index. Updates atomically advance a separate OCR revision; stale writes fail with 409. An empty string removes the index. Search matches file names and explicitly saved OCR text, while returning metadata only and enforcing current note access. OCR text is included in the owner's account export and removed with its attachment/account. File-byte usage counts original normalized file bytes; search metadata is bounded separately. The replica-set suite now has 22 passing tests/subtests, including consent, concurrency, search visibility and revocation.
+
+## Private reminders
+
+GET/PATCH /api/notes/reminders manages an owner-only document with up to 100 entries. Creation requires an accessible active note, a valid UTC timestamp, a 0–365-day interval and an expectedRevision. Optional document tasks carry an exact source line/text checked outside code fences. Reads recheck note access and task provenance; unavailable sources omit titles/task text, while changed or completed tasks are flagged. Updates use optimistic document concurrency and reject stale revisions; completing a recurring review advances once past missed intervals. No reminder mutation edits note content.
+
+Reminders are included in owner account exports and deleted during account fulfillment. Notification delivery is a frontend opt-in while its workspace is open; the backend does not send email or push notifications. Replica-set coverage includes cross-account isolation, simultaneous completion, a racing 100-entry limit, invalid dates, code fences, changed/completed tasks and revoked source access.

@@ -1,3 +1,4 @@
+import Reminders from "../models/reminders.model.js";
 import Attachment from "../models/attachment.model.js";
 import AuthAction from "../models/authAction.model.js";
 import AuthMail from "../models/authMail.model.js";
@@ -23,6 +24,7 @@ export async function* accountExport(owner: string) {
   yield line("manifest", { format: "thyncspace-account", version: 1, startedAt: new Date().toISOString(), consistency: "Each record reflects its read time. Save pending edits before exporting." });
   yield line("profile", profile);
   yield line("authentication", await UserAuth.findOne({ userId: owner }).select("authProvider createdAt updatedAt -_id").lean().exec());
+  yield line("reminders", await Reminders.findOne({ owner }).select("-__v").lean().exec());
   yield line("workspace", await Workspace.findOne({ owner }).select("-__v").lean().exec());
   yield line("deletionRequest", await PrivacyRequest.findOne({ owner }).select("-__v").lean().exec());
   const attachments = Attachment.find({ owner }).select("+data +ocrText").cursor();

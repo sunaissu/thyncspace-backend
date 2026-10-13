@@ -1,3 +1,4 @@
+import Reminders from "../models/reminders.model.js";
 import Attachment from "../models/attachment.model.js";
 import AttachmentQuota from "../models/attachmentQuota.model.js";
 import mongoose from "mongoose";
@@ -36,6 +37,7 @@ export async function fulfillDeletionRequest(requestId: string, username: string
       await Attachment.updateMany({ references: { $in: ids } }, { $pull: { references: { $in: ids } } }, { session }).exec();
       await Note.deleteMany({ owner }, { session }).exec();
       await Workspace.updateMany({ owner: { $ne: owner }, $or: [{ pinned: { $in: ids } }, { "recent.noteId": { $in: ids } }] }, { $pull: { pinned: { $in: ids }, recent: { noteId: { $in: ids } } }, $inc: { revision: 1 } }, { session }).exec();
+      await Reminders.deleteOne({ owner }, { session }).exec();
       await Workspace.deleteOne({ owner }, { session }).exec();
       await Daily.deleteMany({ owner }, { session }).exec();
       await Schedule.deleteMany({ owner }, { session }).exec();

@@ -1,3 +1,4 @@
+import * as Reminders from "../controller/reminders.js";
 import { getNoteActivity } from "../controller/noteActivity.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -41,6 +42,8 @@ const collaborationTokenLimiter = rateLimit({
 
 router.use(requireAuth, mutationLimiter);
 
+router.get("/reminders", Reminders.listReminders);
+router.patch("/reminders", Reminders.updateReminders);
 router.get("/", NoteController.getNotes);
 router.post("/daily", creationLimiter, Schedules.dailyNote);
 router.post("/capture", creationLimiter, captureNote);
