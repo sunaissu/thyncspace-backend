@@ -9,6 +9,7 @@ import session from "express-session";
 import MongoStore from "connect-mongo";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
+import companionRoutes from "./routes/companion.route.js";
 import attachmentRoutes from "./routes/attachments.route.js";
 import noteRoutes from "./routes/notes.route.js";
 import userRoutes from "./routes/user.route.js";
@@ -71,6 +72,8 @@ app.use("/api", (_req, res, next) => {
   next();
 }, apiLimiter);
 app.use(express.json({ limit: "5mb", strict: true }));
+// Scoped native companion requests authenticate independently of browser cookies.
+app.use("/api/companion", companionRoutes);
 
 app.get("/healthz", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");

@@ -69,6 +69,7 @@ export const deleteAttachment: RequestHandler = async (req, res, next) => {
     await session.withTransaction(async () => {
       const file = await Attachment.findOneAndDelete({ _id: id, owner: userId }, { session }).exec();
       if (!file) throw createHttpError(404, "Attachment not found");
+      await Note.updateMany({ _id: { $in: file.references } }, { $inc: { attachmentRevision: 1 } }, { session, timestamps: false }).exec();
       await Quota.updateOne({ owner: userId }, [{ $set: { count: { $max: [0, { $subtract: ["$count", 1] }] }, bytes: { $max: [0, { $subtract: ["$bytes", file.bytes] }] } } }], { session }).exec();
     });
     res.sendStatus(204);
