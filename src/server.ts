@@ -7,6 +7,7 @@ import {
 } from "./collaboration/server.js";
 import { connectCache, disconnectCache } from "./util/cache.js";
 import env from "./util/validateEnv.js";
+import PrivacyRequest from "./models/privacyRequest.model.js";
 import DeviceSession from "./models/deviceSession.model.js";
 import Workspace from "./models/workspace.model.js";
 import Note from "./models/note.model.js";
@@ -67,7 +68,7 @@ mongoose
   })
   .then(async () => {
     // Unique indexes must exist before concurrent first-session/preference writes.
-    await Promise.all([DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init()]);
+    await Promise.all([DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init()]);
     void connectCache();
     startNoteScheduler();
     server.listen(env.PORT, env.HOST, () => {
