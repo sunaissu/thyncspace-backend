@@ -338,3 +338,9 @@ Operational logs now retain a bounded error class, known transport/database code
 A linked document can show up to 1,000 saved Markdown lines. A linked board can show up to 200 chosen objects, framed to their combined region. Selections refer to an exact content revision. When the source changes, choose the selection again; marking a revision reviewed does not silently update the selection. Access to both host and source is still required.
 
 The preview can download a standalone HTML file with literal Markdown or a PNG of the chosen board objects, accessible board text, source revision and a link back to the source. The export checks access before rendering and again before download. Downloaded copies cannot be revoked. Workspace archives retain selection metadata and require review after source IDs are remapped during restoration. Calculator data is not included.
+
+### Technical rendering and private plots
+
+Document Preview and Split render inline `$...$` or `\(...\)` math and display equations enclosed by standalone `$$` lines. The Equation button inserts editable TeX. Math stays ordinary document text and follows document sharing; calculator state never becomes document text automatically. KaTeX renders bounded, untrusted MathML locally without remote fonts or scripts. Markdown retains TeX, and linked-source HTML exports include rendered equations plus literal source.
+
+The private calculator supports sampled function plots, numeric data points, accessible value tables and explicit SVG/CSV downloads. Plots use current calculator variables and angle units. Their inputs, values and graph remain local to that calculator instance, including on shared notes. They never use note APIs, Yjs data or awareness. The two-account presence test checks this boundary.
