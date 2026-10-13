@@ -30,6 +30,7 @@ const noteSchema = new Schema(
     favoritedBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
     notebook: { type: String, default: "", maxlength: 80 },
     sourcePath: { type: String, maxlength: 1024 },
+    isTemplate: { type: Boolean, default: false },
     tags: { type: [String], default: [] },
     trashedAt: { type: Date },
     history: { type: [new Schema({

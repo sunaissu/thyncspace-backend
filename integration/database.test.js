@@ -13,6 +13,8 @@ const { default: mongoose } = await import('mongoose');
 const { default: Note } = await import('../dist/models/note.model.js');
 const notes = await import('../dist/controller/notes.js');
 const library = await import('../dist/controller/noteLibrary.js');
+const workspace = await import('../dist/controller/workspace.js');
+const { default: Workspace } = await import('../dist/models/workspace.model.js');
 const { collaborationServer, shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
 const owner = new mongoose.Types.ObjectId().toString();
 const stranger = new mongoose.Types.ObjectId().toString();
@@ -27,6 +29,41 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
  const replica = await MongoMemoryReplSet.create({ binary: { version: '8.0.16' }, replSet: { count: 1 }, instanceOpts: [{ ip: '127.0.0.1' }] });
  try {
   await mongoose.connect(replica.getUri(), { dbName: 'disposable_review' });
+  await Workspace.init();
+  await t.test('workspace pins, recent notes and searches are bounded and account isolated', async () => {
+   const own = await Note.create({ owner, title: 'Pinned', type: 'document' });
+   const shared = await Note.create({ owner: stranger, title: 'Shared', type: 'document', sharedWith: [{ userId: owner, permission: 'viewer' }] });
+   const hidden = await Note.create({ owner: stranger, title: 'Hidden', type: 'document' });
+   assert.equal((await invoke(workspace.updateWorkspace, { body: { action: 'pin', noteId: hidden.id } })).error?.status, 404);
+   assert.equal((await invoke(workspace.updateWorkspace, { body: { action: 'open', noteId: { $ne: '' } } })).error?.status, 400);
+   const concurrent = await Promise.all([own, shared].map(note => invoke(workspace.updateWorkspace, { body: { action: 'pin', noteId: note.id } })));
+   concurrent.forEach(result => assert.ifError(result.error));
+   let saved = await invoke(workspace.getWorkspace);
+   assert.deepEqual(new Set(saved.body.pinned), new Set([own.id, shared.id]));
+   assert.deepEqual((await invoke(workspace.getWorkspace, { userId: stranger })).body.pinned, []);
+   for (const source of [own, shared, own]) assert.ifError((await invoke(workspace.updateWorkspace, { body: { action: 'open', noteId: source.id } })).error);
+   saved = await invoke(workspace.getWorkspace);
+   assert.deepEqual(saved.body.recent.map(item => item.noteId), [own.id, shared.id]);
+   const search = { id: 'saved-search', name: 'My work', query: '$literal', notebook: 'Work/Study', tag: 'MATH', owner: 'mine', type: 'document', view: 'all', from: '2026-01-01', to: '2026-12-31' };
+   assert.ifError((await invoke(workspace.updateWorkspace, { body: { action: 'save-search', search } })).error);
+   for (const invalid of [{ to: '2026-02-31' }, { from: '2027-01-01' }, { owner: { $ne: '' } }, { query: 'bad\u0000' }, { view: 'unknown' }]) {
+    assert.equal((await invoke(workspace.updateWorkspace, { body: { action: 'save-search', search: { ...search, ...invalid } } })).error?.status, 400);
+   }
+   for (let index = 1; index < 20; index++) assert.ifError((await invoke(workspace.updateWorkspace, { body: { action: 'save-search', search: { ...search, id: 'search-' + index } } })).error);
+   assert.equal((await invoke(workspace.updateWorkspace, { body: { action: 'save-search', search: { ...search, id: 'overflow' } } })).error?.status, 409);
+   assert.ifError((await invoke(workspace.updateWorkspace, { body: { action: 'save-search', search: { ...search, name: 'Renamed' } } })).error);
+   saved = await invoke(workspace.getWorkspace);
+   assert.equal(saved.body.searches.length, 20); assert.equal(saved.body.searches.at(-1).tag, 'math');
+   assert.equal(saved.body.searches.at(-1).query, '$literal'); assert.equal(saved.body.searches.at(-1).name, 'Renamed');
+   assert.deepEqual((await invoke(workspace.getWorkspace, { userId: stranger })).body.searches, []);
+   assert.ifError((await invoke(workspace.updateWorkspace, { body: { action: 'delete-search', id: search.id } })).error);
+   await Note.updateOne({ _id: shared.id }, { $set: { sharedWith: [] } });
+   assert.equal((await invoke(workspace.updateWorkspace, { body: { action: 'open', noteId: shared.id } })).error?.status, 404);
+   assert.ifError((await invoke(workspace.updateWorkspace, { body: { action: 'unpin', noteId: shared.id } })).error);
+   assert.ifError((await invoke(workspace.updateWorkspace, { body: { action: 'clear-recent' } })).error);
+   assert.deepEqual((await invoke(workspace.getWorkspace)).body.recent, []);
+   await Note.deleteMany({ _id: { $in: [own.id, shared.id, hidden.id] } });
+  });
   let noteId;
   await t.test('bulk import returns the committed notes in input order', async () => {
    const imported = await invoke(notes.importNotes, { body: { notes: [{ title: 'First', text: 'base' }, { title: 'Second', text: '' }] } });
@@ -34,6 +71,43 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.deepEqual(imported.body.map(n => n.title), ['First', 'Second']);
    noteId = imported.body[0]._id.toString();
    assert.equal(await Note.countDocuments({ owner }), 2);
+  });
+  await t.test('template metadata is owner-only and copies start as independent private notes', async () => {
+   const changed = await invoke(library.updateOrganization, { noteId, body: { notebook: 'Templates', tags: [], isTemplate: true } });
+   assert.ifError(changed.error); assert.equal(changed.body.isTemplate, true);
+   assert.equal((await invoke(library.updateOrganization, { noteId, userId: stranger, body: { notebook: '', tags: [], isTemplate: false } })).error?.status, 404);
+   assert.equal((await invoke(library.updateOrganization, { noteId, body: { notebook: '', tags: [], isTemplate: { $ne: false } } })).error?.status, 400);
+   const { toNoteResponse } = await import('../dist/util/noteResponse.js');
+   assert.equal(toNoteResponse(await Note.findById(noteId), stranger).isTemplate, undefined);
+   const copy = await invoke(notes.createNote, { body: { title: 'Template copy', type: 'document', text: changed.body.content } });
+   assert.ifError(copy.error); assert.notEqual(copy.body._id.toString(), noteId);
+   assert.equal(copy.body.isTemplate, false); assert.equal(copy.body.sharedWith.length, 0);
+   assert.equal((await Note.findById(noteId)).isTemplate, true);
+  });
+  await t.test('storage totals count UTF-8, history and snapshots without leaking other owners', async () => {
+   const measured = await Note.create({ owner, title: 'Measured storage', type: 'document', status: 'trashed', content: 'a😊', collaborationState: Buffer.from([1, 2]), history: [{ title: 'Old', content: 'old', savedAt: new Date() }] });
+   await Note.create({ owner: stranger, title: 'Other account secret', type: 'document', content: 'secret' });
+   const result = await invoke(library.getStorageUsage);
+   assert.ifError(result.error);
+   const entry = result.body.largest.find(item => item._id.toString() === measured.id);
+   assert.equal(entry.contentBytes, 5); assert.equal(entry.historyBytes, 3); assert.equal(entry.collaborationBytes, 2); assert.equal(entry.totalBytes, 10);
+   assert.ok(result.body.totals.trashBytes >= 10);
+   assert.equal(result.body.largest.some(item => item.title === 'Other account secret'), false);
+  });
+  await t.test('bulk moves are atomic and tag merges treat dollar-prefixed names literally', async () => {
+   const first = await Note.create({ owner, title: 'Move one', type: 'document', content: 'keep', notebook: 'Old', tags: ['old', '$target'] });
+   const second = await Note.create({ owner, title: 'Move two', type: 'document', notebook: 'Old', tags: ['old', 'other'] });
+   const foreign = await Note.create({ owner: stranger, title: 'Foreign', type: 'document', notebook: 'Secret', tags: ['old'] });
+   const denied = await invoke(library.bulkOrganization, { body: { action: 'move', noteIds: [first.id, foreign.id], notebook: 'Research/Physics' } });
+   assert.equal(denied.error?.status, 404); assert.equal((await Note.findById(first.id)).notebook, 'Old');
+   const moved = await invoke(library.bulkOrganization, { body: { action: 'move', noteIds: [first.id, second.id], notebook: 'Research/Physics' } });
+   assert.ifError(moved.error); assert.equal(moved.body.affected, 2); assert.equal((await Note.findById(first.id)).content, 'keep');
+   assert.equal((await invoke(library.bulkOrganization, { body: { action: 'move', noteIds: [first.id], notebook: 'a/../b' } })).error?.status, 400);
+   const merged = await invoke(library.bulkOrganization, { body: { action: 'rename-tag', from: 'old', to: '$target' } });
+   assert.ifError(merged.error); assert.equal(merged.body.affected, 2);
+   assert.deepEqual((await Note.findById(first.id)).tags, ['$target']);
+   assert.deepEqual(new Set((await Note.findById(second.id)).tags), new Set(['other', '$target']));
+   assert.deepEqual((await Note.findById(foreign.id)).tags, ['old']);
   });
   await t.test('only one concurrent save based on the same revision succeeds', async () => {
    const results = await Promise.all(['left', 'right'].map(text => invoke(notes.updatePrivateNote, { noteId, body: { text, expectedRevision: 0 } })));

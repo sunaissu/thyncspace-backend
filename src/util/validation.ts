@@ -449,13 +449,15 @@ export const validateNoteOrganization = (value: unknown) => {
   if (notebook.length > 80 || CONTROL_CHARACTER_PATTERN.test(notebook) || value.tags.length > 20) {
     throw createHttpError(400, "Use a notebook up to 80 characters and at most 20 tags");
   }
+  if (notebook && notebook.split("/").some(part => !part.trim() || part.trim() !== part || part === "." || part === "..")) throw createHttpError(400, "Separate notebook levels with / and give each level a name");
   const tags = value.tags.map((tag: unknown) => {
     if (typeof tag !== "string" || !tag.trim() || tag.trim().length > 40 || CONTROL_CHARACTER_PATTERN.test(tag)) {
       throw createHttpError(400, "Tags must contain 1 to 40 characters");
     }
     return tag.trim().toLowerCase();
   });
-  return { notebook, tags: [...new Set(tags)] };
+  if (value.isTemplate !== undefined && typeof value.isTemplate !== "boolean") throw createHttpError(400, "Template setting must be a boolean");
+  return { notebook, tags: [...new Set(tags)], ...(value.isTemplate === undefined ? {} : { isTemplate: value.isTemplate }) };
 };
 
 /** Imported paths are metadata, never filesystem destinations. */

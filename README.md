@@ -133,3 +133,26 @@ checks this built server with Chrome and real WebSocket/database traffic.
 ## Cursor ownership
 
 Awareness accepts one cursor session per connection. The server replaces incoming account IDs, names, and colors with authenticated identity and an available session color, rejects attempts to reuse another connection's cursor ID, and strips unrelated fields. Positions are finite and bounded. Disconnects remove presence; it is never stored as note content. Accepted username changes refresh the live session identity. Only document and whiteboard state belongs in collaboration; the frontend calculator is private.
+
+## Workspace organization and preferences
+
+Organization accepts isTemplate (boolean) and slash-separated notebook paths with
+nonempty levels; dot/traversal levels are rejected. Template markers stay owner-only.
+POST /api/notes/organization/bulk accepts either
+{ action: "move", noteIds, notebook } (1–100 owned active notes), or
+{ action: "rename-tag", from, to }. Moves verify the entire set in a transaction;
+tag changes merge duplicates and treat names literally. Neither replaces content.
+
+GET /api/notes/storage reports UTF-8 content, retained history and collaboration
+snapshot bytes for owned notes, including trash, and the 20 largest notes. It
+excludes indexes, record overhead and workspace preference metadata.
+
+GET/PATCH /api/notes/workspace reads or updates account-owned preferences. PATCH
+actions are pin/unpin/open with noteId, clear-recent, save-search with search, and
+delete-search with id. A search contains id, name, query, notebook, tag, owner
+(all/mine/shared), type (all/document/whiteboard), view
+(all/shared/documents/boards/favorites/pinned/recent), and from/to ISO dates or "".
+Limits are 100 pins, 40 recent notes, and 20 saved searches. Pin/open checks current
+note access. Mutations serialize per account within the process; optimistic database
+versions reject cross-process races with 409 instead of silently losing changes.
+Responses carry revision so clients can ignore out-of-order replies.

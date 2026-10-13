@@ -17,6 +17,30 @@ const validId = (id: unknown): string => {
   return id;
 };
 
+export const getStorageUsage: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = ownerId(req);
+    const [usage] = await NoteModel.aggregate([
+      { $match: { owner: new mongoose.Types.ObjectId(userId) } },
+      { $project: {
+        title: 1, type: 1, status: 1,
+        contentBytes: { $binarySize: { $ifNull: ["$content", ""] } },
+        collaborationBytes: { $binarySize: { $ifNull: ["$collaborationState", ""] } },
+        historyBytes: { $reduce: { input: { $ifNull: ["$history", []] }, initialValue: 0,
+          in: { $add: ["$$value", { $binarySize: { $ifNull: ["$$this.content", ""] } }] } } },
+      } },
+      { $addFields: { totalBytes: { $add: ["$contentBytes", "$collaborationBytes", "$historyBytes"] } } },
+      { $facet: {
+        totals: [{ $group: { _id: null, notes: { $sum: 1 }, totalBytes: { $sum: "$totalBytes" },
+          contentBytes: { $sum: "$contentBytes" }, historyBytes: { $sum: "$historyBytes" }, collaborationBytes: { $sum: "$collaborationBytes" },
+          trashBytes: { $sum: { $cond: [{ $eq: ["$status", NoteStatus.Trashed] }, "$totalBytes", 0] } } } }],
+        largest: [{ $sort: { totalBytes: -1, _id: 1 } }, { $limit: 20 }],
+      } },
+    ]);
+    res.json({ totals: usage?.totals[0] ?? { notes: 0, totalBytes: 0, contentBytes: 0, historyBytes: 0, collaborationBytes: 0, trashBytes: 0 }, largest: usage?.largest ?? [], noteLimitBytes: 1024 * 1024 });
+  } catch (error) { next(error); }
+};
+
 export const getTrash: RequestHandler = async (req, res, next) => {
   try {
     const userId = ownerId(req);
@@ -37,6 +61,38 @@ export const updateOrganization: RequestHandler = async (req, res, next) => {
       res.json(toNoteResponse(note, userId));
     });
   } catch (error) { next(error); }
+};
+
+export const bulkOrganization: RequestHandler = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  try {
+    const userId = ownerId(req);
+    const action = req.body?.action;
+    let affected = 0;
+    if (action === "move") {
+      if (!Array.isArray(req.body.noteIds) || !req.body.noteIds.length || req.body.noteIds.length > 100) throw createHttpError(400, "Select 1 to 100 owned notes");
+      const ids = [...new Set<string>(req.body.noteIds.map(validId))];
+      const { notebook } = validateNoteOrganization({ notebook: req.body.notebook, tags: [] });
+      await session.withTransaction(async () => {
+        const filter = { _id: { $in: ids }, owner: userId, status: NoteStatus.Active };
+        if (await NoteModel.countDocuments(filter).session(session).exec() !== ids.length) throw createHttpError(404, "One or more owned notes are no longer available");
+        const result = await NoteModel.updateMany(filter, { $set: { notebook } }, { session, runValidators: true }).exec();
+        affected = result.matchedCount;
+      });
+    } else if (action === "rename-tag") {
+      const { tags: [from] } = validateNoteOrganization({ notebook: "", tags: [req.body.from] });
+      const { tags: [to] } = validateNoteOrganization({ notebook: "", tags: [req.body.to] });
+      await session.withTransaction(async () => {
+        const result = await NoteModel.updateMany({ owner: userId, status: NoteStatus.Active, tags: from }, [
+          { $set: { tags: { $setUnion: [{ $setDifference: ["$tags", { $literal: [from] }] }, { $literal: [to] }] } } },
+        ], { session }).exec();
+        affected = result.matchedCount;
+      });
+    } else throw createHttpError(400, "Unknown organization action");
+    await invalidateOwnedNotesCache(userId);
+    res.json({ affected });
+  } catch (error) { next(error); }
+  finally { await session.endSession(); }
 };
 
 export const getHistory: RequestHandler = async (req, res, next) => {

@@ -4,6 +4,7 @@ import * as NoteController from "../controller/notes.js";
 import { requireAuth } from "../util/auth.js";
 
 import * as Library from "../controller/noteLibrary.js";
+import * as Workspace from "../controller/workspace.js";
 
 const router = express.Router();
 
@@ -39,6 +40,10 @@ router.use(requireAuth, mutationLimiter);
 
 router.get("/", NoteController.getNotes);
 router.get("/trash", Library.getTrash);
+router.get("/storage", Library.getStorageUsage);
+router.get("/workspace", Workspace.getWorkspace);
+router.patch("/workspace", Workspace.updateWorkspace);
+router.post("/organization/bulk", Library.bulkOrganization);
 router.delete("/trash/:noteId", Library.permanentlyDeleteTrash);
 router.get("/shared", NoteController.getSharedNotes);
 router.get("/favorites", NoteController.getFavoriteNotes);
