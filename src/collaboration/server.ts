@@ -1,3 +1,4 @@
+import { activityEntry, activityPush } from "../util/noteActivity.js";
 import { parsePresence } from "../util/presence.js";
 import { assertActiveDeviceSession } from "../util/deviceSessions.js";
 import DeviceSession from "../models/deviceSession.model.js";
@@ -343,7 +344,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
           $set: { collaborationState: encodedState, content, title },
           ...(!sameContent ? { $inc: { contentRevision: 1 } } : {}),
           ...(!sameContent || note.title !== title ? {
-            $push: { history: { $each: [{ title: note.title, content: note.content ?? "", savedAt: note.updatedAt ?? new Date() }], $slice: -5 } },
+            $push: { activity: activityPush(activityEntry("edit", privateOnly ? lastContext?.userId : undefined)), history: { $each: [{ title: note.title, content: note.content ?? "", savedAt: note.updatedAt ?? new Date() }], $slice: -5 } },
           } : {}),
         },
       ).exec();

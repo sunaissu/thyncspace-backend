@@ -24,9 +24,9 @@ export async function* accountExport(owner: string) {
   yield line("authentication", await UserAuth.findOne({ userId: owner }).select("authProvider createdAt updatedAt -_id").lean().exec());
   yield line("workspace", await Workspace.findOne({ owner }).select("-__v").lean().exec());
   yield line("deletionRequest", await PrivacyRequest.findOne({ owner }).select("-__v").lean().exec());
-  const notes = Note.find({ owner }).select("+history").sort({ _id: 1 }).cursor();
+  const notes = Note.find({ owner }).select("+history +activity").sort({ _id: 1 }).cursor();
   try {
-    for await (const note of notes) yield line("ownedNote", { ...toNoteResponse(note, owner), history: note.history });
+    for await (const note of notes) yield line("ownedNote", { ...toNoteResponse(note, owner), history: note.history, activity: note.activity });
   } finally { await notes.close(); }
   // Export only this account's current membership, not somebody else's content.
   const memberships = Note.find({ owner: { $ne: owner }, status: "active", "sharedWith.userId": owner }).select("title sharedWith").cursor();

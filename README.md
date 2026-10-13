@@ -229,3 +229,9 @@ Password reset/change atomically updates the credential version, invalidates out
 Email-based sharing now requires completed email verification. Existing accounts, including Google accounts, use the explicit emailed verification link; verification is not automatically granted during sign-in. Google password recovery remains with Google. Username-based sharing stays available when the owner confirms the teammate's username. Existing sharing grants are preserved.
 
 The implementation follows the [OWASP password recovery guidance](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html) and [Nodemailer SMTP transport settings](https://nodemailer.com/smtp). SMTP delivery configuration and a real mailbox smoke check are required before enabling the feature in production.
+
+## Note activity
+
+GET /api/notes/:noteId/activity returns the owner's recent timeline, including trash. Current collaborators cannot read it. Up to 100 events are stored on each note, hidden from ordinary note responses. Content saves append an edit event in the same update as content/history; failed revision checks create none. Sharing and permission changes append their event atomically, and first-share rollback removes its event. Organization, bulk moves/tag changes, trash and restore also record events.
+
+Live save events identify a combined collaboration save, because a stored snapshot may contain edits from several people. Private writes identify the acting account. Names resolve from current profiles; removed identities appear as former accounts. Account deletion scrubs actor/target references in other owners' activity. Trash recovery carries retained events into the new private identity; version recovery records its source version on the new copy. Exports include owned activity. Recording begins after this update; older events are not reconstructed.

@@ -21,10 +21,10 @@ const { default: Workspace } = await import('../dist/models/workspace.model.js')
 const { collaborationServer, shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
 const owner = new mongoose.Types.ObjectId().toString();
 const stranger = new mongoose.Types.ObjectId().toString();
-async function invoke(handler, { noteId, versionId, deviceId, scheduleId, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
+async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
  const result = {};
  const response = { status(code) { result.status = code; return this; }, json(body) { result.body = body; return this; }, sendStatus(code) { result.status = code; return this; } };
- await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId }, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
+ await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId }, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
  return result;
 }
 
@@ -295,7 +295,7 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    const userId = account.id;
    await UserAuth.create({ userId, password: 'password-hash-must-not-export', googleId: 'oauth-id-must-not-export' });
    const own = await Note.create({ owner: userId, title: 'Export board', type: 'whiteboard', content: '{"elements":[]}', history: [{ title: 'Prior', content: 'retained', savedAt: new Date() }], sharedWith: [{ userId: owner, permission: 'editor' }], generationKey: 'hidden-generation' });
-   const foreign = await Note.create({ owner, title: 'Foreign shared', notebook: 'private-folder', content: 'foreign-private-content', sharedWith: [{ userId, permission: 'viewer' }], favoritedBy: [userId, owner] });
+   const foreign = await Note.create({ owner, title: 'Foreign shared', notebook: 'private-folder', content: 'foreign-private-content', activity: [{ kind: 'edit', at: new Date(), actorId: userId, collective: false }, { kind: 'share', at: new Date(), actorId: owner, targetId: userId }], sharedWith: [{ userId, permission: 'viewer' }], favoritedBy: [userId, owner] });
    const unrelated = await Note.create({ owner, title: 'Unrelated' });
    await Workspace.updateOne({ owner }, { $addToSet: { pinned: own.id }, $push: { recent: { noteId: own.id, openedAt: new Date() } } });
    await DeviceSession.create({ userId, sessionHash: 'private-session-hash', userAgent: 'Test browser', expiresAt: new Date(Date.now() + 3600000) });
@@ -320,7 +320,9 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.equal(result.owner, userId);
    assert.equal(await User.countDocuments({ _id: userId }), 0); assert.equal(await UserAuth.countDocuments({ userId }), 0);
    assert.equal(await Note.countDocuments({ owner: userId }), 0); assert.equal(await PrivacyRequest.countDocuments({ owner: userId }), 0);
-   const remaining = await Note.findById(foreign.id);
+   const remaining = await Note.findById(foreign.id).select('+activity');
+   assert.equal(remaining.activity[0].actorId, undefined); assert.equal(remaining.activity[0].collective, false);
+   assert.equal(remaining.activity[1].targetId, undefined);
    assert.equal(remaining.content, 'foreign-private-content'); assert.deepEqual(remaining.sharedWith, []);
    assert.deepEqual(remaining.favoritedBy.map(String), [owner]);
    assert.equal((await Note.findById(unrelated.id)).updatedAt.toISOString(), unrelated.updatedAt.toISOString());
@@ -397,6 +399,34 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    const sharing = await Note.create({ owner, title: 'Verified email recipient' });
    assert.ifError((await invoke(notes.shareNote, { noteId: sharing.id, body: { identifier: google.email, permission: 'viewer' } })).error);
    assert.equal((await Note.findById(sharing.id)).sharedWith[0].userId.toString(), google.id);
+  });
+  await t.test('activity follows committed edits, sharing and recovery and stays owner-only and bounded', async () => {
+   const { getNoteActivity } = await import('../dist/controller/noteActivity.js');
+   const { default: User } = await import('../dist/models/user.model.js');
+   const source = await Note.create({ owner, title: 'Activity', content: 'initial' });
+   const peer = await User.findOne({ username: 'Integration peer' });
+   const saved = await invoke(notes.updatePrivateNote, { noteId: source.id, body: { text: 'changed', expectedRevision: 0 } });
+   assert.ifError(saved.error); assert.equal(saved.body.activity, undefined);
+   assert.equal((await invoke(notes.updatePrivateNote, { noteId: source.id, body: { text: 'stale', expectedRevision: 0 } })).error?.status, 409);
+   let timeline = await invoke(getNoteActivity, { noteId: source.id });
+   assert.ifError(timeline.error); assert.equal(timeline.body.events.filter(event => event.kind === 'edit').length, 1);
+   assert.equal(timeline.body.events[0].actor, 'Schedule owner');
+   assert.ifError((await invoke(notes.shareNote, { noteId: source.id, body: { identifier: peer.username, permission: 'viewer' } })).error);
+   assert.equal((await invoke(getNoteActivity, { noteId: source.id, userId: peer.id })).error?.status, 404);
+   assert.ifError((await invoke(notes.shareNote, { noteId: source.id, body: { identifier: peer.username, permission: 'editor' } })).error);
+   assert.ifError((await invoke(notes.unshareNote, { noteId: source.id, targetUserId: peer.id })).error);
+   timeline = await invoke(getNoteActivity, { noteId: source.id });
+   assert.deepEqual(timeline.body.events.slice(0, 3).map(event => event.kind), ['unshare', 'permission', 'share']);
+   assert.equal(timeline.body.events[0].target, peer.username);
+   const version = (await invoke(library.getHistory, { noteId: source.id })).body[0];
+   const restored = await invoke(library.recoverNote, { noteId: source.id, body: { versionId: String(version.id) } });
+   assert.ifError(restored.error);
+   const copyActivity = await invoke(getNoteActivity, { noteId: String(restored.body._id) });
+   assert.equal(copyActivity.body.events[0].kind, 'restore'); assert.equal(copyActivity.body.events[0].sourceVersionId, String(version.id));
+   for (let index = 0; index < 102; index++) assert.ifError((await invoke(library.updateOrganization, { noteId: source.id, body: { notebook: 'Folder ' + index, tags: [] } })).error);
+   timeline = await invoke(getNoteActivity, { noteId: source.id });
+   assert.equal(timeline.body.events.length, 100);
+   assert.equal((await invoke(getNoteActivity, { noteId: 'bad-id' })).error?.status, 400);
   });
  } finally {
   await shutdownCollaborationServer();

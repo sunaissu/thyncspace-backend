@@ -1,3 +1,4 @@
+import { getNoteActivity } from "../controller/noteActivity.js";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import * as NoteController from "../controller/notes.js";
@@ -57,6 +58,7 @@ router.get("/shared", NoteController.getSharedNotes);
 router.get("/favorites", NoteController.getFavoriteNotes);
 router.post("/", creationLimiter, NoteController.createNote);
 router.post("/import", creationLimiter, NoteController.importNotes);
+router.get("/:noteId/activity", getNoteActivity);
 router.get("/:noteId/history", Library.getHistory);
 router.get("/:noteId/history/:versionId", Library.getVersion);
 router.patch("/:noteId/history/:versionId", Library.renameVersion);

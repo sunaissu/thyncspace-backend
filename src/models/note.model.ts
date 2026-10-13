@@ -35,6 +35,12 @@ const noteSchema = new Schema(
     generationKey: { type: String, unique: true, sparse: true, select: false },
     tags: { type: [String], default: [] },
     trashedAt: { type: Date },
+    activity: { type: [new Schema({
+      kind: { type: String, required: true }, at: { type: Date, required: true },
+      collective: { type: Boolean, default: false },
+      actorId: { type: String }, targetId: { type: String }, permission: { type: String },
+      sourceNoteId: { type: String }, sourceVersionId: { type: String },
+    })], select: false, default: [] },
     history: { type: [new Schema({
       title: { type: String, required: true },
       content: { type: String, default: "" },

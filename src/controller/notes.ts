@@ -1,3 +1,4 @@
+import { activityEntry, activityPush } from "../util/noteActivity.js";
 import { withNoteMutationLock } from "../util/noteMutationLock.js";
 import type { Request, RequestHandler } from "express";
 import createHttpError from "http-errors";
@@ -355,7 +356,7 @@ export const deleteNote: RequestHandler = async (req, res, next) => {
 
       await flushNoteState(noteId);
       await NoteModel.updateOne({ _id: noteId, owner: userId, status: NoteStatus.Active },
-        { $set: { status: NoteStatus.Trashed, trashedAt: new Date() }, $unset: { sharedWith: 1, favoritedBy: 1 } }).exec();
+        { $set: { status: NoteStatus.Trashed, trashedAt: new Date() }, $unset: { sharedWith: 1, favoritedBy: 1 }, $push: { activity: activityPush(activityEntry("trash", userId)) } }).exec();
       disconnectNote(noteId);
       await invalidateOwnedNotesCache(note.owner.toString());
     });
@@ -497,7 +498,9 @@ export const shareNote: RequestHandler = async (req, res, next) => {
 
         if (existing) existing.permission = permission;
         else note.sharedWith.push({ userId: resolvedCollaborator._id, permission });
-        await note.save();
+        const event = activityEntry(existing ? "permission" : "share", ownerId, { targetId: resolvedCollaborator.id, permission });
+        const saved = await NoteModel.updateOne({ _id: noteId, owner: ownerId, status: NoteStatus.Active }, { $set: { sharedWith: note.sharedWith }, $push: { activity: activityPush(event) } }).exec();
+        if (saved.matchedCount !== 1) throw createHttpError(404, "Note not found");
         updateCollaboratorPermission(noteId, resolvedCollaborator.id, permission);
         await invalidateOwnedNotesCache(ownerId);
 
@@ -515,7 +518,7 @@ export const shareNote: RequestHandler = async (req, res, next) => {
           } catch (promotionError) {
             await NoteModel.updateOne(
               { _id: noteId, owner: ownerId, status: NoteStatus.Active },
-              { $pull: { sharedWith: { userId: resolvedCollaborator._id } } },
+              { $pull: { sharedWith: { userId: resolvedCollaborator._id }, activity: { _id: event._id } } },
             ).exec();
             await invalidateOwnedNotesCache(ownerId);
             disconnectCollaborator(noteId, resolvedCollaborator.id);
@@ -553,7 +556,8 @@ export const unshareNote: RequestHandler = async (req, res, next) => {
       if (note.sharedWith.length === previousLength) {
         throw createHttpError(404, "Collaborator not found");
       }
-      await note.save();
+      const saved = await NoteModel.updateOne({ _id: noteId, owner: ownerId, status: NoteStatus.Active }, { $set: { sharedWith: note.sharedWith }, $push: { activity: activityPush(activityEntry("unshare", ownerId, { targetId: collaboratorId })) } }).exec();
+      if (saved.matchedCount !== 1) throw createHttpError(404, "Note not found");
       disconnectCollaborator(noteId, collaboratorId);
       await invalidateOwnedNotesCache(note.owner.toString());
     });

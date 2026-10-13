@@ -1,3 +1,4 @@
+import { activityEntry, activityPush } from "../util/noteActivity.js";
 import type { RequestHandler } from "express";
 import mongoose from "mongoose";
 import createHttpError from "http-errors";
@@ -56,7 +57,7 @@ export const updateOrganization: RequestHandler = async (req, res, next) => {
     const changes = validateNoteOrganization(req.body);
     await withNoteMutationLock(noteId, async () => {
       const note = await NoteModel.findOneAndUpdate({ _id: noteId, owner: userId, status: NoteStatus.Active },
-        { $set: changes }, { new: true, runValidators: true }).exec();
+        { $set: changes, $push: { activity: activityPush(activityEntry("organize", userId)) } }, { new: true, runValidators: true }).exec();
       if (!note) throw createHttpError(404, "Note not found");
       await invalidateOwnedNotesCache(userId);
       res.json(toNoteResponse(note, userId));
@@ -79,7 +80,7 @@ export const bulkOrganization: RequestHandler = async (req, res, next) => {
       await session.withTransaction(async () => {
         const filter = { _id: { $in: ids }, owner: userId, status: NoteStatus.Active };
         if (await NoteModel.countDocuments(filter).session(session).exec() !== ids.length) throw createHttpError(404, "One or more owned notes are no longer available");
-        const result = await NoteModel.updateMany(filter, { $set: changes }, { session, runValidators: true }).exec();
+        const result = await NoteModel.updateMany(filter, { $set: changes, $push: { activity: activityPush(activityEntry("organize", userId)) } }, { session, runValidators: true }).exec();
         affected = result.matchedCount;
       });
     } else if (action === "rename-tag") {
@@ -87,7 +88,7 @@ export const bulkOrganization: RequestHandler = async (req, res, next) => {
       const { tags: [to] } = validateNoteOrganization({ notebook: "", tags: [req.body.to] });
       await session.withTransaction(async () => {
         const result = await NoteModel.updateMany({ owner: userId, status: NoteStatus.Active, tags: from }, [
-          { $set: { tags: { $setUnion: [{ $setDifference: ["$tags", { $literal: [from] }] }, { $literal: [to] }] } } },
+          { $set: { tags: { $setUnion: [{ $setDifference: ["$tags", { $literal: [from] }] }, { $literal: [to] }] }, activity: { $slice: [{ $concatArrays: [{ $ifNull: ["$activity", []] }, { $literal: [activityEntry("organize", userId)] }] }, -100] } } },
         ], { session }).exec();
         affected = result.matchedCount;
       });
@@ -114,13 +115,13 @@ export const recoverNote: RequestHandler = async (req, res, next) => {
     const versionId = req.body?.versionId === undefined ? undefined : validId(req.body.versionId);
     await withNoteMutationLock(noteId, async () => {
       const source = await NoteModel.findOne({ _id: noteId, owner: userId,
-        status: versionId ? NoteStatus.Active : NoteStatus.Trashed }).select("+history").exec();
+        status: versionId ? NoteStatus.Active : NoteStatus.Trashed }).select("+history +activity").exec();
       if (!source) throw createHttpError(404, "Note not found");
       const version = versionId ? source.history.find(item => item._id?.toString() === versionId) : undefined;
       if (versionId && !version) throw createHttpError(404, "Version not found");
       const content = validateNoteContentForType(version?.content ?? source.content ?? "", source.type);
       const input = { _id: new mongoose.Types.ObjectId(), owner: userId, title: version?.title ?? source.title, type: source.type, content,
-        notebook: source.notebook, tags: source.tags, sourcePath: source.sourcePath };
+        notebook: source.notebook, tags: source.tags, sourcePath: source.sourcePath, activity: [...(versionId ? [] : source.activity ?? []), activityEntry("restore", userId, { sourceNoteId: noteId, sourceVersionId: versionId })].slice(-100) };
       // Trash restoration consumes the tombstone atomically; version recovery
       // deliberately leaves the original note and history intact.
       const session = await mongoose.startSession();

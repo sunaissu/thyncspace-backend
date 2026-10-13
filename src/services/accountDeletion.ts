@@ -27,6 +27,8 @@ export async function fulfillDeletionRequest(requestId: string, username: string
       const ids = (await Note.find({ owner }).select("_id").session(session).lean().exec()).map(note => String(note._id));
       affectedOwners = (await Note.distinct("owner", { $or: [{ "sharedWith.userId": owner }, { favoritedBy: owner }] }).session(session).exec()).map(String);
       await Note.updateMany({ owner: { $ne: owner }, $or: [{ "sharedWith.userId": owner }, { favoritedBy: owner }] }, { $pull: { sharedWith: { userId: owner }, favoritedBy: owner } }, { session }).exec();
+      await Note.updateMany({ "activity.actorId": owner }, { $unset: { "activity.$[event].actorId": "" } }, { session, timestamps: false, arrayFilters: [{ "event.actorId": owner }] }).exec();
+      await Note.updateMany({ "activity.targetId": owner }, { $unset: { "activity.$[event].targetId": "" } }, { session, timestamps: false, arrayFilters: [{ "event.targetId": owner }] }).exec();
       await Note.deleteMany({ owner }, { session }).exec();
       await Workspace.updateMany({ owner: { $ne: owner }, $or: [{ pinned: { $in: ids } }, { "recent.noteId": { $in: ids } }] }, { $pull: { pinned: { $in: ids }, recent: { noteId: { $in: ids } } }, $inc: { revision: 1 } }, { session }).exec();
       await Workspace.deleteOne({ owner }, { session }).exec();
