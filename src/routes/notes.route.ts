@@ -6,6 +6,7 @@ import { requireAuth } from "../util/auth.js";
 import * as Library from "../controller/noteLibrary.js";
 import * as Workspace from "../controller/workspace.js";
 import * as Schedules from "../controller/noteSchedules.js";
+import { captureNote } from "../controller/capture.js";
 
 const router = express.Router();
 
@@ -41,6 +42,7 @@ router.use(requireAuth, mutationLimiter);
 
 router.get("/", NoteController.getNotes);
 router.post("/daily", creationLimiter, Schedules.dailyNote);
+router.post("/capture", creationLimiter, captureNote);
 router.get("/schedules", Schedules.listSchedules);
 router.post("/schedules", creationLimiter, Schedules.createSchedule);
 router.patch("/schedules/:scheduleId", Schedules.changeSchedule);

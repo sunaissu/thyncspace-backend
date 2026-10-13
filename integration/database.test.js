@@ -267,6 +267,19 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.match((await Schedule.findById(id)).error, /Template unavailable/);
    assert.equal((await invoke(scheduling.changeSchedule, { scheduleId: id, method: 'DELETE' })).status, 204);
   });
+  await t.test('quick capture is private, retries do not duplicate it, and changed retries cannot overwrite', async () => {
+   const { captureNote } = await import('../dist/controller/capture.js');
+   const body = { captureId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', title: 'Capture', text: 'Private thought', owner: stranger, sharedWith: [{ userId: stranger }] };
+   const results = await Promise.all([invoke(captureNote, { body }), invoke(captureNote, { body })]);
+   results.forEach(result => assert.ifError(result.error));
+   assert.equal(results[0].body._id.toString(), results[1].body._id.toString());
+   assert.equal(results[0].body.owner.toString(), owner); assert.equal(results[0].body.notebook, 'Inbox');
+   assert.deepEqual(results[0].body.sharedWith, []); assert.equal(results[0].body.generationKey, undefined);
+   assert.equal((await invoke(captureNote, { body: { ...body, text: 'Changed retry' } })).error?.status, 409);
+   const independent = await invoke(captureNote, { userId: stranger, body });
+   assert.ifError(independent.error); assert.notEqual(independent.body._id.toString(), results[0].body._id.toString());
+   assert.equal((await invoke(captureNote, { body: { ...body, captureId: { $ne: '' } } })).error?.status, 400);
+  });
  } finally {
   await shutdownCollaborationServer();
   await collaborationServer.hooks("onDestroy", {});

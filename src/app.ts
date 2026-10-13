@@ -21,6 +21,7 @@ import { summarizeError } from "./util/errorLogging.js";
 import { sanitizeRequestTarget } from "./util/requestLogging.js";
 import "./util/passport.js";
 import { trackDeviceSession } from "./util/deviceSessions.js";
+import { requireMatchingAccount } from "./util/auth.js";
 
 const app = express();
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -52,7 +53,7 @@ app.use(
   cors({
     origin: env.CLIENT_URL,
     credentials: true,
-    allowedHeaders: ["Content-Type", "X-CSRF-Token"],
+    allowedHeaders: ["Content-Type", "X-CSRF-Token", "X-Account-Id"],
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
@@ -117,6 +118,7 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(trackDeviceSession);
+app.use(requireMatchingAccount);
 app.use(requireCsrfProtection);
 
 app.use("/api/notes", noteRoutes);

@@ -199,3 +199,9 @@ one private template copy and advances nextRunAt together; generation keys preve
 duplicate occurrences under retry. Downtime produces one catch-up note, then the
 next future occurrence. Missing/invalid templates pause instead of blocking the queue.
 No external scheduler or browser session is required.
+
+## Quick capture and account consistency
+
+POST /api/notes/capture accepts { captureId, title, text } and creates an owned private document in Inbox. A per-account unique generation key makes concurrent/retried identical captures return the same note. A changed or trashed existing capture returns 409; no retry overwrites it. Document limits, authentication, CSRF/origin checks and the creation rate limit apply. Incoming URLs remain text and are never fetched.
+
+Clients can send X-Account-Id on authenticated requests. A mismatch with the session user returns 409 before execution, preventing accidental cross-account writes after another tab signs in. The header does not grant access and is never used as the acting identity. The frontend preserves it across CSRF retries.
