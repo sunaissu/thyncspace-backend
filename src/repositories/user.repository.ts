@@ -3,7 +3,7 @@ import User from "../models/user.model.js";
 import { normalizeEmail, normalizeUsername } from "../util/validation.js";
 
 export const findUserById = async (userId: string) => {
-  return User.findById(userId).select("+email");
+  return User.findById(userId).select("+email +suspendedAt");
 };
 
 export const findUserByUsername = async (username: string) => {
@@ -16,7 +16,7 @@ export const findUserByUsername = async (username: string) => {
 export const findUserByEmail = async (email: string) => {
   return User.findOne({ email: normalizeEmail(email) })
     .collation({ locale: "en", strength: 2 })
-    .select("+email");
+    .select("+email +suspendedAt");
 };
 
 export const createUser = async (
@@ -38,5 +38,5 @@ export const updateUsername = async (userId: string, username: string) => {
     userId,
     { username: normalizeUsername(username) },
     { new: true, runValidators: true },
-  ).select("+email");
+  ).select("+email +suspendedAt");
 };

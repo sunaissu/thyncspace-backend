@@ -1,3 +1,4 @@
+import { hasWorkspaceAccess } from "./workspaceAccess.js";
 import { createHmac } from "node:crypto";
 import type { RequestHandler } from "express";
 import createHttpError from "http-errors";
@@ -9,8 +10,8 @@ export const sessionFingerprint = (sessionId: string) => createHmac("sha256", en
 
 export async function assertActiveDeviceSession(sessionHash: string, userId: string) {
   if (!/^[a-f0-9]{64}$/.test(sessionHash)) throw createHttpError(401, "Session expired or signed out");
-  const [device, user] = await Promise.all([DeviceSession.findOne({ sessionHash, userId, revokedAt: null, expiresAt: { $gt: new Date() } }).exec(), User.findById(userId).select("credentialVersion").exec()]);
-  if (!device || !user || (device.credentialVersion ?? 0) !== (user.credentialVersion ?? 0)) throw createHttpError(401, "Session expired or signed out");
+  const [device, user] = await Promise.all([DeviceSession.findOne({ sessionHash, userId, revokedAt: null, expiresAt: { $gt: new Date() } }).exec(), User.findById(userId).select("credentialVersion emailVerifiedAt +suspendedAt").exec()]);
+  if (!device || !user || !hasWorkspaceAccess(user) || (device.credentialVersion ?? 0) !== (user.credentialVersion ?? 0)) throw createHttpError(401, "Session expired or signed out");
 }
 
 export const trackDeviceSession: RequestHandler = async (req, _res, next) => {

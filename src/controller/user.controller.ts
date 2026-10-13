@@ -1,3 +1,5 @@
+import UserModel from "../models/user.model.js";
+import { hasWorkspaceAccess } from "../util/workspaceAccess.js";
 import { refreshPresenceIdentity } from "../collaboration/server.js";
 import { Request, Response } from 'express'
 import * as userService from '../services/user.service.js'
@@ -15,8 +17,10 @@ const userResponse = (user: {
 
 export const getProfile = async (req: Request, res: Response) => {
   const user = req.user as { email: string; id: string; username: string }
+  const current = await UserModel.findById(user.id).select("emailVerifiedAt +suspendedAt").exec();
   res.status(200).json({
     user: {
+      workspaceAccess: Boolean(current && hasWorkspaceAccess(current)),
       _id: user.id,
       email: user.email,
       username: user.username,

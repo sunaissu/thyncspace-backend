@@ -1,3 +1,4 @@
+import { assertRegistrationEnabled } from "../util/botProtection.js";
 import bcrypt from "bcrypt";
 import mongoose from "mongoose";
 import createHttpError from "http-errors";
@@ -53,6 +54,7 @@ const availableGoogleUsername = async (displayName: string, email: string) => {
 };
 
 export const signUpUser = async ({ username, email, password }: SignupData) => {
+  assertRegistrationEnabled();
   const normalizedUsername = validateUsername(username);
   const normalizedEmail = validateEmail(email);
   const validPassword = validateRegistrationPassword(password);
@@ -114,7 +116,7 @@ export const loginUser = async ({ email, password }: LoginData) => {
     auth?.password ?? (await dummyPasswordHash),
   );
   if (
-    !user ||
+    !user || user.suspendedAt ||
     !auth ||
     auth.authProvider !== AuthProvider.Local ||
     !passwordMatches
@@ -131,7 +133,7 @@ export const authenticateWithGoogle = async (profile: GoogleAuthProfile) => {
   const existingAuth = await userAuthRepository.findAuthByGoogleId(profile.googleId);
   if (existingAuth) {
     const user = await userRepository.findUserById(existingAuth.userId.toString());
-    if (!user) throw createHttpError(404, "User not found");
+    if (!user || user.suspendedAt) throw createHttpError(401, "Account unavailable");
     return user;
   }
 
@@ -142,6 +144,7 @@ export const authenticateWithGoogle = async (profile: GoogleAuthProfile) => {
     );
   }
 
+  assertRegistrationEnabled();
   const username = await availableGoogleUsername(profile.displayName, email);
   const session = await mongoose.startSession();
   session.startTransaction();

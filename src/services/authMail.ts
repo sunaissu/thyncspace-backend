@@ -49,7 +49,7 @@ export async function runAuthMailQueue(sender: AuthMailSender = send, now = new 
     if (!job) break;
     try {
       const payload = unseal(job.payload);
-      const user = await User.findOne({ email: payload.email }).select("+email").exec();
+      const user = await User.findOne({ email: payload.email, suspendedAt: null }).select("+email").exec();
       const auth = user ? await UserAuth.findOne({ userId: user._id }).exec() : null;
       if (!user || !auth || (job.kind !== "verify" && auth.authProvider !== "local") || (payload.userId && payload.userId !== user.id) || (job.kind === "verify" && user.emailVerifiedAt)) {
         await finish(job._id); continue;

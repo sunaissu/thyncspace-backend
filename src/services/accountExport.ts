@@ -21,7 +21,7 @@ import createHttpError from "http-errors";
 // JSON Lines keeps server memory bounded. Credentials, cookies, session hashes,
 // CRDT internals and other accounts' private organization are never exported.
 export async function* accountExport(owner: string) {
-  const profile = await User.findById(owner).select("username +email emailVerifiedAt createdAt updatedAt").lean().exec();
+  const profile = await User.findById(owner).select("username +email emailVerifiedAt +suspendedAt +accessHistory createdAt updatedAt").lean().exec();
   if (!profile) throw createHttpError(401, "Account is unavailable");
   let count = 0;
   const line = (kind: string, data: unknown) => { count++; return JSON.stringify({ kind, data }) + "\n"; };

@@ -3,6 +3,10 @@ import { cleanEnv } from "envalid";
 import { bool, num, port, str } from "envalid/dist/validators.js";
 
 const env = cleanEnv(process.env, {
+  REQUIRE_VERIFIED_EMAIL: bool({ default: false }),
+  REGISTRATION_ENABLED: bool({ default: true }),
+  TURNSTILE_SITE_KEY: str({ default: "" }),
+  TURNSTILE_SECRET_KEY: str({ default: "" }),
   AI_ACTIONS_ENABLED: bool({ default: false }),
   OPENAI_API_KEY: str({ default: "" }),
   OPENAI_AI_MODEL: str({ default: "" }),
@@ -175,5 +179,9 @@ if (env.MAIL_FROM) {
 }
 
 if (env.AI_ACTIONS_ENABLED && (!env.OPENAI_API_KEY || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/.test(env.OPENAI_AI_MODEL))) throw new Error("AI actions require a server-side API key and a valid model ID");
+
+if (Boolean(env.TURNSTILE_SITE_KEY) !== Boolean(env.TURNSTILE_SECRET_KEY) || (env.TURNSTILE_SITE_KEY && !/^[A-Za-z0-9_-]{1,100}$/.test(env.TURNSTILE_SITE_KEY))) throw new Error("Configure a valid TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY together");
+
+if (env.REQUIRE_VERIFIED_EMAIL && (!env.SMTP_HOST || !env.MAIL_FROM)) throw new Error("Verified-email access requires configured authentication email delivery");
 
 export default env;

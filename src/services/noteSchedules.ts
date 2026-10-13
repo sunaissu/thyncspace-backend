@@ -1,3 +1,4 @@
+import { hasWorkspaceAccess } from "../util/workspaceAccess.js";
 import mongoose from "mongoose";
 import createHttpError from "http-errors";
 import Note from "../models/note.model.js";
@@ -37,7 +38,9 @@ export async function runDueSchedules(now = new Date()) {
         const schedule = await Schedule.findOne({ _id: candidate._id, isActive: true, nextRunAt: { $lte: now } }).session(transaction).exec();
         if (!schedule) return;
         owner = schedule.owner.toString();
-        if (!await User.exists({ _id: schedule.owner }).session(transaction)) { await Schedule.deleteOne({ _id: schedule._id }).session(transaction); return; }
+        const account = await User.findById(schedule.owner).select("emailVerifiedAt +suspendedAt").session(transaction).exec();
+        if (!account) { await Schedule.deleteOne({ _id: schedule._id }).session(transaction); return; }
+        if (!hasWorkspaceAccess(account)) { schedule.isActive = false; schedule.error = "Account verification or access requires review. Check Account security before resuming."; await schedule.save({ session: transaction }); return; }
         let template;
         try { template = await templateContent(owner, schedule.templateId.toString(), transaction); }
         catch (error) {

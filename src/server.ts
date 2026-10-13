@@ -1,3 +1,5 @@
+import CompanionGrant from "./models/companionGrant.model.js";
+import { ArchiveImport, ArchiveItem } from "./models/archiveImport.model.js";
 import SharedNotebook from "./models/sharedNotebook.model.js";
 import Discussion from "./models/discussion.model.js";
 import Reminders from "./models/reminders.model.js";
@@ -79,7 +81,7 @@ mongoose
   })
   .then(async () => {
     // Unique indexes must exist before concurrent first-session/preference writes.
-    await Promise.all([SharedNotebook.init(), Discussion.init(), Reminders.init(), DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init(), AuthAction.init(), AuthMail.init(), User.init(), UserAuth.init(), Attachment.init(), AttachmentQuota.init()]);
+    await Promise.all([CompanionGrant.init(), ArchiveImport.init(), ArchiveItem.init(), SharedNotebook.init(), Discussion.init(), Reminders.init(), DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init(), AuthAction.init(), AuthMail.init(), User.init(), UserAuth.init(), Attachment.init(), AttachmentQuota.init()]);
     void connectCache();
     startNoteScheduler();
     startAuthMailWorker();

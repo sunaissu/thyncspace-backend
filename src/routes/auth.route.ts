@@ -1,3 +1,4 @@
+import { authPolicy, verifyBotToken } from "../util/botProtection.js";
 import * as Security from "../controller/accountSecurity.js";
 import passport from "passport";
 import express from 'express'
@@ -42,6 +43,7 @@ const csrfTokenLimiter = rateLimit({
     legacyHeaders: false,
 })
 
+router.get('/policy', csrfTokenLimiter, (_req, res) => res.json(authPolicy()))
 router.get('/csrf-token', csrfTokenLimiter, issueCsrfToken)
 router.post('/register', registrationLimiter, AuthController.signup)
 router.post('/login', loginLimiter, AuthController.login)
@@ -60,7 +62,7 @@ router.get('/google/callback',
         })(req, res, next)
     });
 
-router.post('/request-reset', loginLimiter, Security.requestPasswordReset)
+router.post('/request-reset', loginLimiter, async (req, _res, next) => { await verifyBotToken(req.body?.botToken, 'recover'); next(); }, Security.requestPasswordReset)
 router.post('/account-action', loginLimiter, Security.confirmAccountAction)
 router.get('/security', requireAuth, Security.securityStatus)
 router.post('/request-verification', requireAuth, loginLimiter, Security.requestVerification)

@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
+Object.assign(process.env, { CLIENT_URL: 'http://localhost:3000', COLLABORATION_SECRET: 'test-collaboration-secret-at-least-32-characters', GOOGLE_AUTH_CLIENT_ID: 'test', GOOGLE_AUTH_CLIENT_SECRET: 'test', GOOGLE_CALLBACK_URL: 'http://localhost:5000/auth/google/callback', MONGO_CONN: 'mongodb://127.0.0.1:1', MONGO_DB_NAME: 'disposable_access', SESSION_SECRET: 'test-session-secret-at-least-32-characters-long', REGISTRATION_ENABLED: 'false' });
+const { default: mongoose } = await import('mongoose');
+const { default: bcrypt } = await import('bcrypt');
+const { default: User } = await import('../dist/models/user.model.js');
+const { default: Auth } = await import('../dist/models/userAuth.model.js');
+const { default: Device } = await import('../dist/models/deviceSession.model.js');
+const { default: Note } = await import('../dist/models/note.model.js');
+const { default: Grant } = await import('../dist/models/companionGrant.model.js');
+const { default: Schedule } = await import('../dist/models/noteSchedule.model.js');
+const { changeAccountAccess } = await import('../dist/services/accountAccess.js');
+const auth = await import('../dist/services/auth.service.js');
+const { loadSessionIdentity } = await import('../dist/util/sessionIdentity.js');
+const { assertActiveDeviceSession } = await import('../dist/util/deviceSessions.js');
+const companion = await import('../dist/services/companion.js');
+const { shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
+test('closed registration preserves existing sign-in and suspension invalidates every access channel', { timeout: 180000 }, async () => {
+ const replica = await MongoMemoryReplSet.create({ binary: { version: '8.0.16' }, replSet: { count: 1 } });
+ try {
+  await mongoose.connect(replica.getUri(), { dbName: 'disposable_access' }); await Promise.all([User.init(), Auth.init(), Grant.init(), Device.init(), Schedule.init()]);
+  const user = await User.create({ username: 'Local account', email: 'local@example.test' }), google = await User.create({ username: 'Google account', email: 'google@example.test' });
+  await Auth.create({ userId: user.id, authProvider: 'local', password: await bcrypt.hash('fixture-password-12', 12) }); await Auth.create({ userId: google.id, authProvider: 'google', googleId: 'google-fixture' });
+  await assert.rejects(auth.signUpUser({ username: 'New user', email: 'new@example.test', password: 'fixture-password-12' }), error => error.status === 503);
+  await assert.rejects(auth.authenticateWithGoogle({ googleId: 'new-google', email: 'newgoogle@example.test', displayName: 'New Google' }), error => error.status === 503);
+  assert.equal((await auth.loginUser({ email: 'local@example.test', password: 'fixture-password-12' })).id, user.id); assert.equal((await auth.authenticateWithGoogle({ googleId: 'google-fixture', email: 'google@example.test', displayName: 'Google' })).id, google.id);
+  const sessionHash = 'a'.repeat(64); await Device.create({ userId: user.id, sessionHash, expiresAt: new Date(Date.now() + 3600000) });
+  const note = await Note.create({ owner: user.id, title: 'Private', content: 'Kept', isTemplate: true });
+  const grant = await companion.createCompanionGrant(user.id, { clientId: randomUUID(), consent: true, name: 'Obsidian', noteIds: [note.id], attachments: false });
+  const schedule = await Schedule.create({ owner: user.id, templateId: note.id, title: 'Daily test', cadence: 'daily', time: '09:00', weekday: 0, nextRunAt: new Date(Date.now() + 3600000), slot: 0 });
+  await assert.rejects(changeAccountAccess(user.id, 'Wrong name', 0, 'suspend', 'Operator', 'Reviewed abuse'), error => error.status === 404);
+  await changeAccountAccess(user.id, user.username, 0, 'suspend', 'Operator', 'Reviewed abuse');
+  assert.equal(await loadSessionIdentity({ id: user.id, version: 0 }), null); assert.equal(await loadSessionIdentity({ id: user.id, version: 1 }), null);
+  await assert.rejects(auth.loginUser({ email: 'local@example.test', password: 'fixture-password-12' }), error => error.status === 401); await assert.rejects(assertActiveDeviceSession(sessionHash, user.id), error => error.status === 401); await assert.rejects(companion.authenticateCompanion('Bearer ' + grant.token), error => error.status === 401);
+  assert.equal((await Schedule.findById(schedule.id)).isActive, false); assert.equal((await Note.findById(note.id)).content, 'Kept'); assert.equal((await User.findById(user.id)).suspendedAt, undefined);
+  await assert.rejects(changeAccountAccess(user.id, user.username, 0, 'resume', 'Operator', 'Reviewed appeal'), error => error.status === 409);
+  await changeAccountAccess(user.id, user.username, 1, 'resume', 'Operator', 'Reviewed appeal'); assert.equal((await auth.loginUser({ email: 'local@example.test', password: 'fixture-password-12' })).id, user.id); assert.equal(await loadSessionIdentity({ id: user.id, version: 0 }), null); assert.equal((await Schedule.findById(schedule.id)).isActive, false);
+  const updated = await User.findById(user.id).select('+accessHistory'); assert.equal(updated.accessHistory.length, 2); assert.equal(updated.accessHistory[1].action, 'resume');
+  await changeAccountAccess(google.id, google.username, 0, 'suspend', 'Operator', 'Reviewed abuse'); await assert.rejects(auth.authenticateWithGoogle({ googleId: 'google-fixture', email: 'google@example.test', displayName: 'Google' }), error => error.status === 401);
+ } finally { await shutdownCollaborationServer(); await mongoose.disconnect(); await replica.stop(); }
+});

@@ -26,7 +26,7 @@ export async function consumeAccountAction(purpose: unknown, token: unknown, pas
       const action = await AuthAction.findOne({ tokenHash: hash, purpose, expiresAt: { $gt: new Date() } }).select("+email").session(session).exec();
       if (!action) throw invalidLink();
       owner = String(action.userId);
-      const user = await User.findOneAndUpdate({ _id: owner, email: action.email, ...versionQuery(action.credentialVersion) }, {
+      const user = await User.findOneAndUpdate({ _id: owner, suspendedAt: null, email: action.email, ...versionQuery(action.credentialVersion) }, {
         $set: { emailVerifiedAt: new Date() }, ...(purpose === "reset" ? { $inc: { credentialVersion: 1 } } : {}),
       }, { new: true, session }).select("+email").exec();
       if (!user) throw invalidLink();
@@ -57,7 +57,7 @@ export async function changePassword(owner: string, credentialVersion: number, c
   const passwordHash = await bcrypt.hash(next, 12), session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
-      const user = await User.findOneAndUpdate({ _id: owner, ...versionQuery(credentialVersion) }, { $inc: { credentialVersion: 1 } }, { new: true, session }).select("+email").exec();
+      const user = await User.findOneAndUpdate({ _id: owner, suspendedAt: null, ...versionQuery(credentialVersion) }, { $inc: { credentialVersion: 1 } }, { new: true, session }).select("+email").exec();
       if (!user) throw createHttpError(409, "Account credentials changed. Sign in again.");
       const updated = await UserAuth.updateOne({ _id: auth._id, password: auth.password }, { $set: { password: passwordHash } }, { session }).exec();
       if (updated.modifiedCount !== 1) throw createHttpError(409, "Account credentials changed. Sign in again.");

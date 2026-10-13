@@ -1,3 +1,4 @@
+import { requireWorkspaceAccess } from "../util/workspaceAccess.js";
 import { manageCompanion } from "../controller/companion.js";
 import * as Archive from "../controller/workspaceArchive.js";
 import * as Ai from "../controller/passageAi.js";
@@ -46,7 +47,7 @@ const collaborationTokenLimiter = rateLimit({
   message: { error: "Too many collaboration requests; please reconnect later." },
 });
 
-router.use(requireAuth, mutationLimiter);
+router.use(requireAuth, requireWorkspaceAccess, mutationLimiter);
 const archiveLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 360, keyGenerator: req => req.user!.id, standardHeaders: "draft-8", legacyHeaders: false });
 const archiveExportLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 2, keyGenerator: req => req.user!.id, standardHeaders: "draft-8", legacyHeaders: false });
 router.get("/companion-connections", manageCompanion);

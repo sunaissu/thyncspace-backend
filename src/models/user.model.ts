@@ -2,6 +2,8 @@ import { InferSchemaType, model, Schema } from "mongoose";
 
 const userSchema = new Schema(
   {
+    suspendedAt: { type: Date, default: null, select: false },
+    accessHistory: { type: [{ _id: false, at: Date, action: String, actor: String, reason: String }], default: [], select: false },
     credentialVersion: { type: Number, default: 0, min: 0 },
     emailVerifiedAt: { type: Date, default: null },
     username: {

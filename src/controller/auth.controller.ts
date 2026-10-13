@@ -1,3 +1,4 @@
+import { assertRegistrationEnabled, verifyBotToken } from "../util/botProtection.js";
 import { mailConfigured, queueAuthMail } from "../services/authMail.js";
 import type { Request, Response } from "express";
 import * as authService from "../services/auth.service.js";
@@ -18,6 +19,8 @@ const userResponse = (user: {
 });
 
 export const signup = async (req: Request, res: Response) => {
+  assertRegistrationEnabled();
+  await verifyBotToken(req.body?.botToken, "register");
   const user = await authService.signUpUser(req.body ?? {});
   await new Promise<void>((resolve, reject) => {
     req.login(user as Express.User, (error) =>
@@ -35,6 +38,7 @@ export const signup = async (req: Request, res: Response) => {
 };
 
 export const login = async (req: Request, res: Response) => {
+  await verifyBotToken(req.body?.botToken, "login");
   const user = await authService.loginUser(req.body ?? {});
   await new Promise<void>((resolve, reject) => {
     req.login(user as Express.User, (error) =>

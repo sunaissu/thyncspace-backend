@@ -1,3 +1,4 @@
+import { hasWorkspaceAccess } from "../util/workspaceAccess.js";
 import { createHash, randomBytes } from "node:crypto";
 import createHttpError from "http-errors";
 import Grant from "../models/companionGrant.model.js";
@@ -20,7 +21,7 @@ export async function createCompanionGrant(owner: string, input: { name?: unknow
   if (input.consent !== true || typeof input.name !== "string" || !input.name.trim() || input.name.length > 80 || /\p{Cc}/u.test(input.name) || !Array.isArray(input.noteIds) || !input.noteIds.length || input.noteIds.length > 50 || typeof input.attachments !== "boolean") throw createHttpError(400, "Name the connection, select 1–50 private documents, and confirm its access");
   const noteIds = [...new Set(input.noteIds.map(attachmentId))];
   if (await Note.countDocuments({ _id: { $in: noteIds }, ...privateDocuments(owner) }) !== noteIds.length) throw createHttpError(409, "Only your active private documents can be connected. Refresh the list");
-  const user = await User.findById(owner).exec(); if (!user) throw createHttpError(401, "Account unavailable");
+  const user = await User.findById(owner).select("+suspendedAt").exec(); if (!user || !hasWorkspaceAccess(user)) throw createHttpError(401, "Account unavailable");
   await Grant.deleteMany({ owner, expiresAt: { $lte: new Date() } }).exec();
   if (await Grant.exists({ owner, clientId })) throw createHttpError(409, "This connection was already created. Tokens are shown once; revoke it and create another if its response was lost");
   const token = "thy_obs_" + randomBytes(32).toString("base64url"), tokenHash = createHash("sha256").update(token).digest("hex");
@@ -35,8 +36,8 @@ export async function authenticateCompanion(authorization: unknown): Promise<Com
   const tokenHash = createHash("sha256").update(authorization.slice(7)).digest("hex");
   const grant = await Grant.findOne({ tokenHash, expiresAt: { $gt: new Date() } }).select("+credentialVersion").exec();
   if (!grant) throw createHttpError(401, "Companion access expired or was revoked");
-  const user = await User.findById(grant.owner).select("credentialVersion").exec();
-  if (!user || (user.credentialVersion ?? 0) !== grant.credentialVersion) throw createHttpError(401, "Companion access expired or was revoked");
+  const user = await User.findById(grant.owner).select("credentialVersion emailVerifiedAt +suspendedAt").exec();
+  if (!user || !hasWorkspaceAccess(user) || (user.credentialVersion ?? 0) !== grant.credentialVersion) throw createHttpError(401, "Companion access expired or was revoked");
   await Grant.updateOne({ _id: grant.id, $or: [{ lastUsedAt: { $exists: false } }, { lastUsedAt: { $lt: new Date(Date.now() - 300000) } }] }, { $set: { lastUsedAt: new Date() } }).exec();
   return { id: grant.id, owner: String(grant.owner), noteIds: grant.noteIds, attachments: grant.attachments, credentialVersion: grant.credentialVersion };
 }
@@ -46,8 +47,8 @@ export async function revokeCompanion(owner: string, id: unknown) {
 }
 async function currentScope(scope: CompanionScope) {
   const grant = await Grant.findOne({ _id: scope.id, owner: scope.owner, expiresAt: { $gt: new Date() } }).select("+credentialVersion").exec();
-  const user = await User.findById(scope.owner).select("credentialVersion").exec();
-  if (!grant || !user || grant.credentialVersion !== (user.credentialVersion ?? 0)) throw createHttpError(401, "Companion access expired or was revoked");
+  const user = await User.findById(scope.owner).select("credentialVersion emailVerifiedAt +suspendedAt").exec();
+  if (!grant || !user || !hasWorkspaceAccess(user) || grant.credentialVersion !== (user.credentialVersion ?? 0)) throw createHttpError(401, "Companion access expired or was revoked");
   return grant;
 }
 export async function companionNote(scope: CompanionScope, id: unknown) {

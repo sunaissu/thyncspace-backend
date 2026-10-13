@@ -1,3 +1,4 @@
+import { hasWorkspaceAccess } from "../util/workspaceAccess.js";
 import { activityEntry, activityPush } from "../util/noteActivity.js";
 import { parsePresence } from "../util/presence.js";
 import { assertActiveDeviceSession } from "../util/deviceSessions.js";
@@ -525,8 +526,8 @@ const revalidateActiveConnections = async () => {
   let activeSessions: Set<string>;
   try {
     const devices = await DeviceSession.find({ sessionHash: { $in: sessionHashes }, revokedAt: null, expiresAt: { $gt: new Date() } }).select("+sessionHash").exec();
-    const users = await UserModel.find({ _id: { $in: devices.map(device => device.userId) } }).select("credentialVersion").exec();
-    const versions = new Map(users.map(user => [user.id, user.credentialVersion ?? 0]));
+    const users = await UserModel.find({ _id: { $in: devices.map(device => device.userId) } }).select("credentialVersion emailVerifiedAt +suspendedAt").exec();
+    const versions = new Map(users.filter(hasWorkspaceAccess).map(user => [user.id, user.credentialVersion ?? 0]));
     activeSessions = new Set(devices.filter(device => versions.get(String(device.userId)) === (device.credentialVersion ?? 0)).map(device => device.sessionHash));
   } catch {
     // Fail closed when revocation state cannot be verified.
