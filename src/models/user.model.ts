@@ -2,6 +2,8 @@ import { InferSchemaType, model, Schema } from "mongoose";
 
 const userSchema = new Schema(
   {
+    credentialVersion: { type: Number, default: 0, min: 0 },
+    emailVerifiedAt: { type: Date, default: null },
     username: {
       type: String,
       required: true,

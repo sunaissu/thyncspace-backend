@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
 import createHttpError from "http-errors";
+import AuthAction from "../models/authAction.model.js";
+import AuthMail from "../models/authMail.model.js";
+import { emailKey } from "./authMail.js";
 import User from "../models/user.model.js";
 import UserAuth from "../models/userAuth.model.js";
 import Note from "../models/note.model.js";
@@ -19,7 +22,7 @@ export async function fulfillDeletionRequest(requestId: string, username: string
       const request = await PrivacyRequest.findOne({ _id: requestId, status: "pending" }).session(session).exec();
       if (!request) throw createHttpError(409, "Request is missing or cancelled");
       owner = String(request.owner);
-      const user = await User.findById(owner).session(session).exec();
+      const user = await User.findById(owner).select("+email").session(session).exec();
       if (!user || user.username !== username) throw createHttpError(409, "The account name does not match; review the request again");
       const ids = (await Note.find({ owner }).select("_id").session(session).lean().exec()).map(note => String(note._id));
       affectedOwners = (await Note.distinct("owner", { $or: [{ "sharedWith.userId": owner }, { favoritedBy: owner }] }).session(session).exec()).map(String);
@@ -32,6 +35,8 @@ export async function fulfillDeletionRequest(requestId: string, username: string
       // Keep only revocation tombstones until cookie expiry. Otherwise a cached
       // session identity could register itself again after a Redis outage.
       await Device.updateMany({ userId: owner }, { $set: { revokedAt: new Date(), userAgent: "Deleted account" } }, { session }).exec();
+      await AuthAction.deleteMany({ userId: owner }, { session }).exec();
+      await AuthMail.deleteMany({ emailKey: emailKey(user.email) }, { session }).exec();
       await UserAuth.deleteOne({ userId: owner }, { session }).exec();
       await User.deleteOne({ _id: owner }, { session }).exec();
       await PrivacyRequest.deleteOne({ _id: requestId, status: "pending" }, { session }).exec();

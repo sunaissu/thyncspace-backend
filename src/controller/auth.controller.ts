@@ -1,3 +1,4 @@
+import { mailConfigured, queueAuthMail } from "../services/authMail.js";
 import type { Request, Response } from "express";
 import * as authService from "../services/auth.service.js";
 import env from "../util/validateEnv.js";
@@ -23,6 +24,10 @@ export const signup = async (req: Request, res: Response) => {
       error ? reject(error) : resolve(),
     );
   });
+  if (mailConfigured()) {
+    try { await queueAuthMail("verify", user.email, user.id); }
+    catch { console.error("Could not queue signup verification; it can be requested again in settings."); }
+  }
   res.status(201).json({
     message: "User created successfully",
     user: userResponse(user),

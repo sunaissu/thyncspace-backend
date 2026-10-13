@@ -459,6 +459,12 @@ export const disconnectNote = (noteId: string) => {
     .forEach((connection) => connection.close());
 };
 
+export const disconnectUserSessions = (userId: string) => {
+  collaborationServer.documents.forEach(document => document.getConnections().forEach(connection => {
+    if (connection.context.userId === userId) connection.close();
+  }));
+};
+
 export const disconnectDeviceSession = (sessionHash: string) => {
   collaborationServer.documents.forEach(document => document.getConnections().forEach(connection => {
     if (connection.context.sessionHash === sessionHash) connection.close();
@@ -515,7 +521,9 @@ const revalidateActiveConnections = async () => {
   let activeSessions: Set<string>;
   try {
     const devices = await DeviceSession.find({ sessionHash: { $in: sessionHashes }, revokedAt: null, expiresAt: { $gt: new Date() } }).select("+sessionHash").exec();
-    activeSessions = new Set(devices.map(device => device.sessionHash));
+    const users = await UserModel.find({ _id: { $in: devices.map(device => device.userId) } }).select("credentialVersion").exec();
+    const versions = new Map(users.map(user => [user.id, user.credentialVersion ?? 0]));
+    activeSessions = new Set(devices.filter(device => versions.get(String(device.userId)) === (device.credentialVersion ?? 0)).map(device => device.sessionHash));
   } catch {
     // Fail closed when revocation state cannot be verified.
     collaborationServer.closeConnections();

@@ -2,14 +2,7 @@ import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import env from "./validateEnv.js";
 import * as authService from "../services/auth.service.js";
-import * as userRepository from "../repositories/user.repository.js";
-import { cacheKeys, readThroughCachedJson } from "./cache.js";
-
-interface SessionUser {
-  email: string;
-  id: string;
-  username: string;
-}
+import { loadSessionIdentity } from "./sessionIdentity.js";
 
 passport.use(
   new GoogleStrategy(
@@ -36,28 +29,10 @@ passport.use(
 );
 
 passport.serializeUser((user, callback) => {
-  callback(null, user.id);
+  callback(null, { id: user.id, version: user.credentialVersion ?? 0 });
 });
 
-passport.deserializeUser(async (userId: string, callback) => {
-  try {
-    const normalizedUserId = String(userId);
-    const user = await readThroughCachedJson<SessionUser | null>(
-      cacheKeys.sessionUser(normalizedUserId),
-      async () => {
-        const storedUser = await userRepository.findUserById(normalizedUserId);
-        return storedUser
-          ? {
-              email: storedUser.email,
-              id: storedUser.id,
-              username: storedUser.username,
-            }
-          : null;
-      },
-    );
-    if (!user) return callback(null, false);
-    return callback(null, user);
-  } catch (error) {
-    return callback(error);
-  }
+passport.deserializeUser(async (identity: unknown, callback) => {
+  try { callback(null, await loadSessionIdentity(identity) || false); }
+  catch (error) { callback(error); }
 });

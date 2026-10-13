@@ -1,3 +1,6 @@
+import AuthAction from "../models/authAction.model.js";
+import AuthMail from "../models/authMail.model.js";
+import { emailKey } from "./authMail.js";
 import User from "../models/user.model.js";
 import Note from "../models/note.model.js";
 import UserAuth from "../models/userAuth.model.js";
@@ -12,7 +15,7 @@ import createHttpError from "http-errors";
 // JSON Lines keeps server memory bounded. Credentials, cookies, session hashes,
 // CRDT internals and other accounts' private organization are never exported.
 export async function* accountExport(owner: string) {
-  const profile = await User.findById(owner).select("username +email createdAt updatedAt").lean().exec();
+  const profile = await User.findById(owner).select("username +email emailVerifiedAt createdAt updatedAt").lean().exec();
   if (!profile) throw createHttpError(401, "Account is unavailable");
   let count = 0;
   const line = (kind: string, data: unknown) => { count++; return JSON.stringify({ kind, data }) + "\n"; };
@@ -33,6 +36,8 @@ export async function* accountExport(owner: string) {
   for (const [kind, makeCursor] of [
     ["dailyNote", () => Daily.find({ owner }).select("-__v").cursor()],
     ["schedule", () => Schedule.find({ owner }).select("-__v").cursor()],
+    ["recoveryAction", () => AuthAction.find({ userId: owner }).select("purpose createdAt expiresAt -_id").cursor()],
+    ["authenticationDelivery", () => AuthMail.find({ emailKey: emailKey(profile.email) }).select("kind attempts createdAt expiresAt -_id").cursor()],
     ["device", () => Device.find({ userId: owner }).select("-__v").cursor()],
   ] as const) {
     const cursor = makeCursor();

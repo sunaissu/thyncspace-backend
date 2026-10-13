@@ -6,7 +6,7 @@ export const MAX_NOTE_CONTENT_BYTES = 1024 * 1024;
 export const MAX_IMPORT_NOTES = 100;
 export const MAX_IMPORT_CONTENT_BYTES = 4 * 1024 * 1024;
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_PATTERN = /^[^\s@<>,;:"\\()[\]\p{Cc}]+@[^\s@]+\.[^\s@]+$/u;
 const CONTROL_CHARACTER_PATTERN = /\p{Cc}/u;
 const MAX_ABSOLUTE_BOARD_COORDINATE = 1_000_000_000;
 const MAX_BOARD_ELEMENTS = 10_000;
@@ -335,6 +335,8 @@ export const validateEmail = (value: unknown) => {
   if (!email || email.length > 254 || !EMAIL_PATTERN.test(email)) {
     throw createHttpError(400, "Enter a valid email address");
   }
+  const [local, domain] = email.split("@");
+  if (local.startsWith(".") || local.endsWith(".") || local.includes("..") || Buffer.byteLength(local, "utf8") > 64 || domain.split(".").some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) throw createHttpError(400, "Enter a valid email address");
   return email;
 };
 

@@ -1,13 +1,16 @@
 import { createHmac } from "node:crypto";
 import type { RequestHandler } from "express";
 import createHttpError from "http-errors";
+import User from "../models/user.model.js";
 import DeviceSession from "../models/deviceSession.model.js";
 import env from "./validateEnv.js";
 
 export const sessionFingerprint = (sessionId: string) => createHmac("sha256", env.SESSION_SECRET).update("device-session:" + sessionId).digest("hex");
 
 export async function assertActiveDeviceSession(sessionHash: string, userId: string) {
-  if (!/^[a-f0-9]{64}$/.test(sessionHash) || !await DeviceSession.exists({ sessionHash, userId, revokedAt: null, expiresAt: { $gt: new Date() } })) throw createHttpError(401, "Session expired or signed out");
+  if (!/^[a-f0-9]{64}$/.test(sessionHash)) throw createHttpError(401, "Session expired or signed out");
+  const [device, user] = await Promise.all([DeviceSession.findOne({ sessionHash, userId, revokedAt: null, expiresAt: { $gt: new Date() } }).exec(), User.findById(userId).select("credentialVersion").exec()]);
+  if (!device || !user || (device.credentialVersion ?? 0) !== (user.credentialVersion ?? 0)) throw createHttpError(401, "Session expired or signed out");
 }
 
 export const trackDeviceSession: RequestHandler = async (req, _res, next) => {
@@ -15,7 +18,7 @@ export const trackDeviceSession: RequestHandler = async (req, _res, next) => {
   try {
     const sessionHash = sessionFingerprint(req.sessionID);
     const changes = {
-      $setOnInsert: { userId: req.user.id, sessionHash, firstSeenAt: new Date(), userAgent: (req.get("user-agent") || "Unknown browser").replace(/\p{Cc}/gu, "").slice(0, 300) },
+      $setOnInsert: { credentialVersion: req.user.credentialVersion ?? 0, userId: req.user.id, sessionHash, firstSeenAt: new Date(), userAgent: (req.get("user-agent") || "Unknown browser").replace(/\p{Cc}/gu, "").slice(0, 300) },
       $set: { lastSeenAt: new Date(), expiresAt: req.session.cookie.expires ?? new Date(Date.now() + 7 * 86400000) },
     };
     let device;

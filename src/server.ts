@@ -7,6 +7,11 @@ import {
 } from "./collaboration/server.js";
 import { connectCache, disconnectCache } from "./util/cache.js";
 import env from "./util/validateEnv.js";
+import User from "./models/user.model.js";
+import UserAuth from "./models/userAuth.model.js";
+import AuthAction from "./models/authAction.model.js";
+import AuthMail from "./models/authMail.model.js";
+import { startAuthMailWorker, stopAuthMailWorker } from "./services/authMail.js";
 import PrivacyRequest from "./models/privacyRequest.model.js";
 import DeviceSession from "./models/deviceSession.model.js";
 import Workspace from "./models/workspace.model.js";
@@ -43,6 +48,7 @@ const shutdown = async (signal: string) => {
 
   try {
     await stopNoteScheduler();
+    await stopAuthMailWorker();
     await shutdownCollaborationServer();
     await httpClosed;
     disconnectCache();
@@ -68,9 +74,10 @@ mongoose
   })
   .then(async () => {
     // Unique indexes must exist before concurrent first-session/preference writes.
-    await Promise.all([DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init()]);
+    await Promise.all([DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init(), AuthAction.init(), AuthMail.init(), User.init(), UserAuth.init()]);
     void connectCache();
     startNoteScheduler();
+    startAuthMailWorker();
     server.listen(env.PORT, env.HOST, () => {
       console.log(`Server listening on ${env.HOST}:${env.PORT}`);
     });

@@ -1,3 +1,4 @@
+import * as Security from "../controller/accountSecurity.js";
 import passport from "passport";
 import express from 'express'
 import * as AuthController from '../controller/auth.controller.js'
@@ -58,6 +59,12 @@ router.get('/google/callback',
             })
         })(req, res, next)
     });
+
+router.post('/request-reset', loginLimiter, Security.requestPasswordReset)
+router.post('/account-action', loginLimiter, Security.confirmAccountAction)
+router.get('/security', requireAuth, Security.securityStatus)
+router.post('/request-verification', requireAuth, loginLimiter, Security.requestVerification)
+router.post('/change-password', requireAuth, loginLimiter, Security.updatePassword)
 
 router.post('/logout', requireAuth, AuthController.logout)
 

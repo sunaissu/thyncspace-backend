@@ -462,11 +462,12 @@ export const shareNote: RequestHandler = async (req, res, next) => {
     for (const query of getShareIdentifierLookupQueries(identifier)) {
       collaborator = await UserModel.findOne(query)
         .collation({ locale: "en", strength: 2 })
-        .select("username +email")
+        .select("username +email emailVerifiedAt")
         .exec();
       if (collaborator) break;
     }
     if (!collaborator) throw createHttpError(404, "User not found");
+    if (identifier.includes("@") && !collaborator.emailVerifiedAt) throw createHttpError(400, "This account must verify its email in Account security before you can share by email. You can use a confirmed username instead.");
     const resolvedCollaborator = collaborator;
     if (resolvedCollaborator.id === ownerId) {
       throw createHttpError(400, "The owner already has full access");

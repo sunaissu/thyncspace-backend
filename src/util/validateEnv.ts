@@ -1,7 +1,14 @@
+import { validateEmail } from "./validation.js";
 import { cleanEnv } from "envalid";
-import { num, port, str } from "envalid/dist/validators.js";
+import { bool, num, port, str } from "envalid/dist/validators.js";
 
 const env = cleanEnv(process.env, {
+  SMTP_HOST: str({ default: "" }),
+  SMTP_PORT: port({ default: 587 }),
+  SMTP_SECURE: bool({ default: false }),
+  SMTP_USER: str({ default: "" }),
+  SMTP_PASSWORD: str({ default: "" }),
+  MAIL_FROM: str({ default: "" }),
   MONGO_CONN: str(),
   MONGO_AUTH_MODE: str({
     choices: ["aws-iam", "password"],
@@ -156,6 +163,12 @@ if (env.ENVIRONMENT === "production") {
       throw new Error("Password MongoDB authentication cannot use MONGODB-AWS options");
     }
   }
+}
+
+if (Boolean(env.SMTP_HOST) !== Boolean(env.MAIL_FROM) || Boolean(env.SMTP_USER) !== Boolean(env.SMTP_PASSWORD)) throw new Error("Configure SMTP_HOST with MAIL_FROM, and SMTP_USER with SMTP_PASSWORD");
+if (env.MAIL_FROM) {
+  try { validateEmail(env.MAIL_FROM); if (/[\r\n]/.test(env.SMTP_HOST)) throw new Error(); }
+  catch { throw new Error("Invalid SMTP host or sender address"); }
 }
 
 export default env;
