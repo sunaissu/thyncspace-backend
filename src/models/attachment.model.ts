@@ -10,6 +10,7 @@ const schema = new Schema({
   references: { type: [String], default: [], index: true },
   ocrText: { type: String, maxlength: 50000, select: false },
   indexedAt: { type: Date },
+  ocrRevision: { type: Number, default: 0, select: false },
 }, { timestamps: true });
 schema.index({ owner: 1, hash: 1 }, { unique: true });
 export default model("Attachment", schema);

@@ -428,6 +428,35 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.equal(timeline.body.events.length, 100);
    assert.equal((await invoke(getNoteActivity, { noteId: 'bad-id' })).error?.status, 400);
   });
+  await t.test('OCR indexing requires owner consent, rejects stale writes and follows file access', async () => {
+   const { default: Attachment } = await import('../dist/models/attachment.model.js');
+   const { default: Quota } = await import('../dist/models/attachmentQuota.model.js');
+   const files = await import('../dist/controller/attachments.js');
+   const { default: sharp } = await import('sharp');
+   await Promise.all([Attachment.init(), Quota.init()]);
+   const image = await sharp({ create: { width: 20, height: 20, channels: 3, background: '#ffffff' } }).png().toBuffer();
+   const upload = await invoke(files.uploadAttachment, { body: { name: 'Scan.png', mime: 'image/png', data: image.toString('base64') } }); assert.ifError(upload.error);
+   const id = upload.body.id, body = { text: 'Orbits and vectors', consent: true, expectedRevision: 0 };
+   assert.equal((await invoke(files.updateAttachmentIndex, { attachmentId: id, body: { ...body, consent: false } })).error?.status, 400);
+   assert.equal((await invoke(files.updateAttachmentIndex, { attachmentId: id, body: { ...body, expectedRevision: undefined } })).error?.status, 428);
+   assert.equal((await invoke(files.updateAttachmentIndex, { attachmentId: id, body: { ...body, text: 'x'.repeat(50001) } })).error?.status, 400);
+   assert.equal((await invoke(files.getAttachmentIndex, { attachmentId: id, userId: stranger })).error?.status, 404);
+   assert.equal((await invoke(files.updateAttachmentIndex, { attachmentId: id, userId: stranger, body })).error?.status, 409);
+   assert.equal((await invoke(files.getAttachmentIndex, { attachmentId: id })).body.revision, 0);
+   const writes = await Promise.all([1, 2].map(() => invoke(files.updateAttachmentIndex, { attachmentId: id, body })));
+   assert.equal(writes.filter(result => !result.error).length, 1); assert.equal(writes.find(result => result.error).error.status, 409);
+   assert.equal((await invoke(files.getAttachmentIndex, { attachmentId: id })).body.text, body.text);
+   assert.equal((await invoke(files.listAttachments, { query: { q: 'vectors' } })).body.files.length, 1);
+   assert.equal((await invoke(files.listAttachments, { userId: stranger, query: { q: 'vectors' } })).body.files.length, 0);
+   const source = await Note.create({ owner, title: 'OCR source', sharedWith: [{ userId: stranger, permission: 'viewer' }] });
+   assert.ifError((await invoke(files.referenceAttachment, { attachmentId: id, body: { noteId: source.id } })).error);
+   assert.equal((await invoke(files.listAttachments, { userId: stranger, query: { q: 'vectors', noteId: source.id } })).body.files.length, 1);
+   await Note.updateOne({ _id: source.id }, { $set: { sharedWith: [] } });
+   assert.equal((await invoke(files.listAttachments, { userId: stranger, query: { q: 'vectors', noteId: source.id } })).error?.status, 404);
+   assert.ifError((await invoke(files.updateAttachmentIndex, { attachmentId: id, body: { ...body, text: '', expectedRevision: 1 } })).error);
+   assert.equal((await invoke(files.listAttachments, { query: { q: 'vectors' } })).body.files.length, 0);
+   assert.ifError((await invoke(files.deleteAttachment, { attachmentId: id, body: { confirmation: id } })).error);
+  });
   await t.test('attachment quota, concurrent deduplication, note access and restored references stay consistent', async () => {
    const { default: Attachment } = await import('../dist/models/attachment.model.js');
    const { default: Quota } = await import('../dist/models/attachmentQuota.model.js');

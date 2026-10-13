@@ -9,6 +9,8 @@ const uploads = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, keyGenerator: r
 router.use(requireAuth, changes);
 router.get("/", Attachments.listAttachments);
 router.post("/", uploads, Attachments.uploadAttachment);
+router.get("/:attachmentId/index", Attachments.getAttachmentIndex);
+router.put("/:attachmentId/index", Attachments.updateAttachmentIndex);
 router.get("/:attachmentId/content", Attachments.attachmentContent);
 router.post("/:attachmentId/references", Attachments.referenceAttachment);
 router.delete("/:attachmentId/references", Attachments.referenceAttachment);

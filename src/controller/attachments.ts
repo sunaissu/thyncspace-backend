@@ -74,3 +74,25 @@ export const deleteAttachment: RequestHandler = async (req, res, next) => {
     res.sendStatus(204);
   } catch (error) { next(error); } finally { await session.endSession(); }
 };
+
+export const getAttachmentIndex: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = owner(req), id = attachmentId(req.params.attachmentId);
+    const file = await Attachment.findOne({ _id: id, owner: userId }).select("+ocrText +ocrRevision").exec();
+    if (!file) throw createHttpError(404, "Owned attachment not found");
+    res.json({ text: file.ocrText ?? "", indexedAt: file.indexedAt ?? null, revision: file.ocrRevision ?? 0 });
+  } catch (error) { next(error); }
+};
+export const updateAttachmentIndex: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = owner(req), id = attachmentId(req.params.attachmentId), text = req.body?.text;
+    if (typeof text !== "string" || text.length > 50000 || text.includes("\0")) throw createHttpError(400, "OCR text must contain at most 50,000 characters without null characters");
+    if (req.body?.consent !== true) throw createHttpError(400, "Confirm indexing the selected file");
+    const revision = req.body?.expectedRevision;
+    if (!Number.isSafeInteger(revision) || revision < 0) throw createHttpError(428, "Load the current index before changing it");
+    const indexedAt = text.trim() ? new Date() : null;
+    const file = await Attachment.findOneAndUpdate({ _id: id, owner: userId, mime: { $in: ["image/png", "image/jpeg", "image/webp"] }, ...(revision === 0 ? { $or: [{ ocrRevision: 0 }, { ocrRevision: { $exists: false } }] } : { ocrRevision: revision }) }, { $set: { ocrText: text.trim(), indexedAt }, $inc: { ocrRevision: 1 } }, { new: true, runValidators: true }).exec();
+    if (!file) throw createHttpError(409, "The index changed or the owned image is unavailable. Reload before saving");
+    res.json({ text: text.trim(), indexedAt, revision: revision + 1 });
+  } catch (error) { next(error); }
+};
