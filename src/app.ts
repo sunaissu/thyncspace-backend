@@ -1,3 +1,4 @@
+import { serviceInfo } from "./util/serviceInfo.js";
 import "dotenv/config";
 import express, { type NextFunction, type Request, type Response } from "express";
 import mongoose from "mongoose";
@@ -42,12 +43,10 @@ app.use(
   }),
 );
 morgan.token("safe-url", (request) =>
-  sanitizeRequestTarget((request as Request).originalUrl ?? request.url),
+  sanitizeRequestTarget(typeof (request as Request).route?.path === "string" ? (request as Request).route.path : "/[unmatched]"),
 );
-const requestLogFormat =
-  env.ENVIRONMENT === "production"
-    ? ':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"'
-    : ":method :safe-url :status :response-time ms - :res[content-length]";
+const requestLogFormat = ":method :safe-url :status :response-time ms - :res[content-length]";
+// Route patterns omit note IDs and arbitrary URLs; omit IPs, referrers and user agents.
 app.use(morgan(requestLogFormat));
 
 app.use(
@@ -74,6 +73,8 @@ app.use("/api", (_req, res, next) => {
 app.use(express.json({ limit: "5mb", strict: true }));
 // Scoped native companion requests authenticate independently of browser cookies.
 app.use("/api/companion", companionRoutes);
+
+app.get("/api/service-info", (_req, res) => { res.json(serviceInfo(mongoose.connection.readyState === 1)); });
 
 app.get("/healthz", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");

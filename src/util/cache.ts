@@ -1,3 +1,4 @@
+import { summarizeError } from "./errorLogging.js";
 import { createClient } from "@redis/client";
 import env from "./validateEnv.js";
 
@@ -32,7 +33,7 @@ const reportError = (error: unknown) => {
   const now = Date.now();
   if (now - lastErrorLogAt < 60_000) return;
   lastErrorLogAt = now;
-  console.error("Redis cache unavailable; using MongoDB directly", error);
+  console.error("Redis cache unavailable; using MongoDB directly", summarizeError(error));
 };
 
 const scheduleRetry = () => {

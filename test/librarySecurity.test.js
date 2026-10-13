@@ -132,7 +132,7 @@ test('invalid stored whiteboards fail closed rather than opening an empty board'
   const find = NoteModel.findOne;
   t.after(() => { NoteModel.findOne = find; });
   NoteModel.findOne = () => { const query = { select: () => query, exec: async () => ({ title: 'Legacy', type: NoteType.Whiteboard, content: '{bad json' }) }; return query; };
-  await assert.rejects(collaborationServer.configuration.onLoadDocument({ documentName: noteId }), /Stored whiteboard content is invalid/);
+  await assert.rejects(collaborationServer.configuration.onLoadDocument({ documentName: noteId }), /collaboration request could not complete/);
 });
 
 
@@ -172,9 +172,9 @@ test('awareness binds one session to the authenticated owner and strips untruste
   assert.deepEqual(states.get(1).user, { id: owner, name: 'Authenticated owner', color: '#b91c1c' });
   assert.equal(states.get(1).calculator, undefined);
   assert.deepEqual(states.get(1).cursor, { surface: 'board', x: 12, y: 34 });
-  await assert.rejects(collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states: new Map([[99, { user: {} }]]) }), /session mismatch/);
+  await assert.rejects(collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states: new Map([[99, { user: {} }]]) }), /collaboration request could not complete/);
   const impostor = { userId: 'other', username: 'Other', expiresAt: Date.now() + 60000 };
-  await assert.rejects(collaborationServer.configuration.beforeHandleAwareness({ context: impostor, connection: { context: impostor }, document, states: new Map([[99, { user: {} }]]) }), /already owned/);
+  await assert.rejects(collaborationServer.configuration.beforeHandleAwareness({ context: impostor, connection: { context: impostor }, document, states: new Map([[99, { user: {} }]]) }), /collaboration request could not complete/);
   const invalid = new Map([[1, { user: {}, cursor: { surface: 'board', x: Infinity, y: 0 } }]]);
   await collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states: invalid });
   assert.equal(invalid.get(1).cursor, null);

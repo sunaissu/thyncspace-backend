@@ -1,3 +1,4 @@
+import { summarizeError } from "./util/errorLogging.js";
 import CompanionGrant from "./models/companionGrant.model.js";
 import { ArchiveImport, ArchiveItem } from "./models/archiveImport.model.js";
 import SharedNotebook from "./models/sharedNotebook.model.js";
@@ -62,7 +63,7 @@ const shutdown = async (signal: string) => {
     await mongoose.disconnect();
   } catch (error) {
     closeError = error instanceof Error ? error : new Error(String(error));
-    console.error("Graceful shutdown failed", error);
+    console.error("Graceful shutdown failed", summarizeError(error));
   } finally {
     clearTimeout(forceExit);
     process.exit(closeError ? 1 : 0);
@@ -90,7 +91,7 @@ mongoose
     });
   })
   .catch(async (error) => {
-    console.error("Database startup failed", error);
+    console.error("Database startup failed", summarizeError(error));
     await mongoose.disconnect();
     process.exitCode = 1;
   });

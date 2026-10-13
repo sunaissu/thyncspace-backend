@@ -1,3 +1,4 @@
+import { summarizeError } from "../util/errorLogging.js";
 import { hasWorkspaceAccess } from "../util/workspaceAccess.js";
 import { activityEntry, activityPush } from "../util/noteActivity.js";
 import { parsePresence } from "../util/presence.js";
@@ -5,7 +6,7 @@ import { assertActiveDeviceSession } from "../util/deviceSessions.js";
 import DeviceSession from "../models/deviceSession.model.js";
 import { collaborationSnapshot } from "../util/collaborationSnapshot.js";
 import { createHash } from "node:crypto";
-import { Hocuspocus } from "@hocuspocus/server";
+import { Hocuspocus, type Configuration } from "@hocuspocus/server";
 import type { Server as HttpServer } from "http";
 import mongoose from "mongoose";
 import { WebSocketServer } from "ws";
@@ -193,7 +194,7 @@ const getAccess = async (documentName: string, userId: string) => {
   return { note, permission: collaborator.permission as PermissionLevel };
 };
 
-export const collaborationServer = new Hocuspocus<CollaborationContext>({
+const collaborationHooks = {
   name: "thyncspace-collaboration",
   debounce: 2500,
   maxDebounce: 10000,
@@ -375,6 +376,19 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
       throw error;
     }
   },
+} satisfies Partial<Configuration<CollaborationContext>>;
+
+function protectHook<A, R>(run: (payload: A) => Promise<R>) {
+  return async (payload: A): Promise<R> => { try { return await run(payload); } catch (error) { console.error("Collaboration hook failed", summarizeError(error)); throw new Error("The collaboration request could not complete. Reconnect or retry after checking access."); } };
+}
+export const collaborationServer = new Hocuspocus<CollaborationContext>({
+  ...collaborationHooks,
+  onAuthenticate: protectHook(collaborationHooks.onAuthenticate),
+  onTokenSync: protectHook(collaborationHooks.onTokenSync),
+  beforeSync: protectHook(collaborationHooks.beforeSync),
+  beforeHandleAwareness: protectHook(collaborationHooks.beforeHandleAwareness),
+  onLoadDocument: protectHook(collaborationHooks.onLoadDocument),
+  onStoreDocument: protectHook(collaborationHooks.onStoreDocument),
 });
 
 export const updateNoteState = async (
@@ -511,7 +525,7 @@ export const shutdownCollaborationServer = async () => {
   );
   if (failures.length) {
     failures.forEach(({ documentName, error }) => {
-      console.error(`Collaboration state for ${documentName} was not stored`, error);
+      console.error(`Collaboration state for ${documentName} was not stored`, summarizeError(error));
     });
     throw new Error(
       `Could not safely store ${failures.length} collaboration document${
@@ -566,7 +580,7 @@ const revalidateActiveConnections = async () => {
           connection.sendStateless(JSON.stringify({ type: "note-permission", permission }));
         });
       } catch (error) {
-        console.error(`Could not recheck collaboration access for ${noteId}`, error);
+        console.error(`Could not recheck collaboration access for ${noteId}`, summarizeError(error));
       }
     })());
   });
@@ -676,7 +690,7 @@ export const attachCollaborationServer = (server: HttpServer) => {
         });
       });
       websocket.on("error", (error) => {
-        console.error("Collaboration WebSocket error", error);
+        console.error("Collaboration WebSocket error", summarizeError(error));
       });
     });
   });
@@ -687,7 +701,7 @@ export const attachCollaborationServer = (server: HttpServer) => {
     sweepRunning = true;
     void revalidateActiveConnections()
       .catch((error) => {
-        console.error("Collaboration access recheck failed", error);
+        console.error("Collaboration access recheck failed", summarizeError(error));
       })
       .finally(() => {
         sweepRunning = false;

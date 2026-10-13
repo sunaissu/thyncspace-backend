@@ -1,3 +1,5 @@
+import { summarizeError } from "./util/errorLogging.js";
+import { isHttpError } from "http-errors";
 import "dotenv/config";
 import mongoose from "mongoose";
 import env from "./util/validateEnv.js";
@@ -10,5 +12,5 @@ try {
   await mongoose.connect(env.MONGO_CONN, { dbName: env.MONGO_DB_NAME });
   if (command === "show") { const user = await User.findById(id).select("username credentialVersion +suspendedAt +accessHistory").lean().exec(); if (!user) throw new Error("Account not found"); console.log(JSON.stringify(user)); }
   else { await connectCache(); await changeAccountAccess(id, username, Number(version), command, actor, reason); console.log("Account access updated. Existing credentials were revoked; resume does not restart schedules."); }
-} catch (error) { console.error(error instanceof Error ? error.message : "Account access maintenance failed"); process.exitCode = 1; }
+} catch (error) { console.error(isHttpError(error) && error.expose ? error.message : "Account access maintenance failed. Check the documented arguments and database availability.", summarizeError(error)); process.exitCode = 1; }
 finally { disconnectCache(); await mongoose.disconnect(); }

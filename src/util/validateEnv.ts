@@ -3,6 +3,12 @@ import { cleanEnv } from "envalid";
 import { bool, num, port, str } from "envalid/dist/validators.js";
 
 const env = cleanEnv(process.env, {
+  SERVICE_STATUS: str({ choices: ["operational", "maintenance", "degraded"], default: "operational" }),
+  SERVICE_NOTICE: str({ default: "" }),
+  PUBLIC_SUPPORT_URL: str({ default: "" }),
+  PUBLIC_PRIVACY_URL: str({ default: "" }),
+  PUBLIC_TERMS_URL: str({ default: "" }),
+  PUBLIC_RETENTION_NOTICE: str({ default: "" }),
   REQUIRE_VERIFIED_EMAIL: bool({ default: false }),
   REGISTRATION_ENABLED: bool({ default: true }),
   TURNSTILE_SITE_KEY: str({ default: "" }),
@@ -183,5 +189,8 @@ if (env.AI_ACTIONS_ENABLED && (!env.OPENAI_API_KEY || !/^[a-zA-Z0-9][a-zA-Z0-9._
 if (Boolean(env.TURNSTILE_SITE_KEY) !== Boolean(env.TURNSTILE_SECRET_KEY) || (env.TURNSTILE_SITE_KEY && !/^[A-Za-z0-9_-]{1,100}$/.test(env.TURNSTILE_SITE_KEY))) throw new Error("Configure a valid TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY together");
 
 if (env.REQUIRE_VERIFIED_EMAIL && (!env.SMTP_HOST || !env.MAIL_FROM)) throw new Error("Verified-email access requires configured authentication email delivery");
+
+for (const value of [env.PUBLIC_SUPPORT_URL, env.PUBLIC_PRIVACY_URL, env.PUBLIC_TERMS_URL]) { if (!value) continue; try { const url = new URL(value); if (value.length > 2048 || url.protocol !== "https:" || url.username || url.password) throw new Error(); } catch { throw new Error("Public service links must be HTTPS URLs without credentials"); } }
+if (env.SERVICE_NOTICE.length > 1000 || env.PUBLIC_RETENTION_NOTICE.length > 2000 || /\p{Cc}/u.test((env.SERVICE_NOTICE + env.PUBLIC_RETENTION_NOTICE).replace(/[\r\n\t]/g, ""))) throw new Error("Public service notices are too long or contain control characters");
 
 export default env;

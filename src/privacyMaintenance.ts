@@ -1,3 +1,5 @@
+import { summarizeError } from "./util/errorLogging.js";
+import { isHttpError } from "http-errors";
 import "dotenv/config";
 import mongoose from "mongoose";
 import env from "./util/validateEnv.js";
@@ -22,5 +24,5 @@ try {
     await deleteCachedKeys(cacheKeys.sessionUser(result.owner), cacheKeys.ownedNotes(result.owner), ...result.affectedOwners.map(cacheKeys.ownedNotes));
     console.log("Deletion request fulfilled. Revocation tombstones expire with their sessions.");
   }
-} catch (error) { console.error(error instanceof Error ? error.message : "Privacy maintenance failed"); process.exitCode = 1; }
+} catch (error) { console.error(isHttpError(error) && error.expose ? error.message : "Privacy maintenance failed. Check the documented arguments and database availability.", summarizeError(error)); process.exitCode = 1; }
 finally { disconnectCache(); await mongoose.disconnect(); }

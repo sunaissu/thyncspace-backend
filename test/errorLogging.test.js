@@ -10,7 +10,7 @@ test("summarizeError omits nested provider response details", () => {
 
   assert.deepEqual(summarizeError(error), {
     name: "Error",
-    message: "Failed to obtain access token",
+    message: "Operation failed; private diagnostics omitted",
     code: "EACCES",
   });
 });
@@ -20,4 +20,10 @@ test("summarizeError does not stringify unknown thrown values", () => {
     name: "UnknownError",
     message: "A non-Error value was thrown",
   });
+});
+
+test("summaries exclude secrets in top-level names, messages, codes and nested database diagnostics", () => {
+ const error = Object.assign(new Error("password=private-note-title"), { name: "private-owner-name", code: "PRIVATE_TOKEN", status: 502, query: { content: "private-note-body" } });
+ assert.deepEqual(summarizeError(error), { name: "Error", message: "Operation failed; private diagnostics omitted", status: 502 });
+ assert.equal(summarizeError(Object.assign(new Error("duplicate secret"), { code: 11000 })).code, 11000);
 });

@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -31,7 +32,8 @@ test("direct updates and shutdown surface a swallowed collaboration store failur
   const originalFindOne = NoteModel.findOne;
   const originalUpdateOne = NoteModel.updateOne;
   const originalConsoleError = console.error;
-  const storedError = new Error("simulated MongoDB store failure");
+  const storedError = new Error("private-note-and-credential-diagnostic");
+  const logged = [];
   let pendingConnection;
 
   const note = {
@@ -53,7 +55,7 @@ test("direct updates and shutdown surface a swallowed collaboration store failur
       throw storedError;
     },
   });
-  console.error = () => undefined;
+  console.error = (...args) => logged.push(args);
 
   t.after(() => {
     NoteModel.findOne = originalFindOne;
@@ -118,4 +120,5 @@ test("direct updates and shutdown surface a swallowed collaboration store failur
     shutdownCollaborationServer(),
     /Could not safely store 1 collaboration document during shutdown/,
   );
+  assert.equal(inspect(logged, { depth: 8 }).includes(storedError.message), false);
 });
