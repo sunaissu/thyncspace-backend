@@ -5,6 +5,7 @@ import { requireAuth } from "../util/auth.js";
 
 import * as Library from "../controller/noteLibrary.js";
 import * as Workspace from "../controller/workspace.js";
+import * as Schedules from "../controller/noteSchedules.js";
 
 const router = express.Router();
 
@@ -39,6 +40,11 @@ const collaborationTokenLimiter = rateLimit({
 router.use(requireAuth, mutationLimiter);
 
 router.get("/", NoteController.getNotes);
+router.post("/daily", creationLimiter, Schedules.dailyNote);
+router.get("/schedules", Schedules.listSchedules);
+router.post("/schedules", creationLimiter, Schedules.createSchedule);
+router.patch("/schedules/:scheduleId", Schedules.changeSchedule);
+router.delete("/schedules/:scheduleId", Schedules.changeSchedule);
 router.get("/trash", Library.getTrash);
 router.get("/storage", Library.getStorageUsage);
 router.get("/workspace", Workspace.getWorkspace);

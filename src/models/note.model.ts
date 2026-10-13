@@ -32,6 +32,7 @@ const noteSchema = new Schema(
     sourcePath: { type: String, maxlength: 1024 },
     isTemplate: { type: Boolean, default: false },
     isArchived: { type: Boolean, default: false },
+    generationKey: { type: String, unique: true, sparse: true, select: false },
     tags: { type: [String], default: [] },
     trashedAt: { type: Date },
     history: { type: [new Schema({

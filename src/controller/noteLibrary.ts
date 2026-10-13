@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import mongoose from "mongoose";
 import createHttpError from "http-errors";
 import NoteModel from "../models/note.model.js";
+import Daily from "../models/dailyNote.model.js";
 import { NoteStatus } from "../types/_enums.js";
 import { toNoteResponse } from "../util/noteResponse.js";
 import { invalidateOwnedNotesCache } from "../util/cache.js";
@@ -127,6 +128,7 @@ export const recoverNote: RequestHandler = async (req, res, next) => {
         await session.withTransaction(async () => {
           const [copy] = await NoteModel.create([input], { session });
           if (!versionId) {
+            await Daily.updateOne({ owner: userId, noteId }, { $set: { noteId: input._id } }, { session }).exec();
             const result = await NoteModel.deleteOne({ _id: noteId, owner: userId, status: NoteStatus.Trashed }, { session }).exec();
             if (result.deletedCount !== 1) throw createHttpError(409, "This note was already restored");
           }

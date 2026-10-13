@@ -21,10 +21,10 @@ const { default: Workspace } = await import('../dist/models/workspace.model.js')
 const { collaborationServer, shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
 const owner = new mongoose.Types.ObjectId().toString();
 const stranger = new mongoose.Types.ObjectId().toString();
-async function invoke(handler, { noteId, versionId, deviceId, sessionID = "test-current-session", body = {}, userId = owner } = {}) {
+async function invoke(handler, { noteId, versionId, deviceId, scheduleId, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
  const result = {};
  const response = { status(code) { result.status = code; return this; }, json(body) { result.body = body; return this; }, sendStatus(code) { result.status = code; return this; } };
- await handler({ user: { id: userId }, params: { noteId, versionId, deviceId }, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
+ await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId }, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
  return result;
 }
 
@@ -223,6 +223,49 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    const restored = results.find(r => r.status === 201).body;
    assert.notEqual(restored._id.toString(), noteId); assert.deepEqual(restored.sharedWith, []);
    assert.equal(await Note.countDocuments({ _id: noteId }), 0);
+  });
+  await t.test('daily notes retain identity through trash recovery and schedules run once under concurrency', async () => {
+   const { default: User } = await import('../dist/models/user.model.js');
+   const { default: Daily } = await import('../dist/models/dailyNote.model.js');
+   const { default: Schedule } = await import('../dist/models/noteSchedule.model.js');
+   const scheduling = await import('../dist/controller/noteSchedules.js');
+   const { runDueSchedules } = await import('../dist/services/noteSchedules.js');
+   await Promise.all([Daily.init(), Schedule.init(), Note.init()]);
+   await User.create({ _id: owner, username: 'Schedule owner', email: 'schedules@example.test' });
+   const template = await Note.create({ owner, title: 'Daily template', type: 'document', content: 'Plan the day', isTemplate: true, notebook: 'Journal', tags: ['daily'] });
+   const results = await Promise.all([1, 2].map(() => invoke(scheduling.dailyNote, { body: { date: '2026-10-13', templateId: template.id } })));
+   results.forEach(result => assert.ifError(result.error));
+   assert.equal(results[0].body._id.toString(), results[1].body._id.toString());
+   assert.equal(results[0].body.content, 'Plan the day'); assert.deepEqual(results[0].body.sharedWith, []);
+   const dailyId = results[0].body._id.toString();
+   assert.equal((await invoke(scheduling.dailyNote, { body: { date: '2026-02-31' } })).error?.status, 400);
+   assert.equal((await invoke(scheduling.dailyNote, { userId: stranger, body: { date: '2026-10-13', templateId: template.id } })).error?.status, 404);
+   assert.equal((await invoke(notes.deleteNote, { noteId: dailyId })).status, 204);
+   assert.equal((await invoke(scheduling.dailyNote, { body: { date: '2026-10-13' } })).error?.status, 409);
+   const restored = await invoke(library.recoverNote, { noteId: dailyId });
+   assert.ifError(restored.error);
+   assert.equal((await invoke(scheduling.dailyNote, { body: { date: '2026-10-13' } })).body._id.toString(), restored.body._id.toString());
+   const created = await invoke(scheduling.createSchedule, { body: { title: 'Morning', templateId: template.id, cadence: 'daily', time: '09:00', weekday: 1 } });
+   assert.ifError(created.error); const id = created.body.id;
+   assert.equal((await invoke(scheduling.changeSchedule, { userId: stranger, scheduleId: id, body: { isActive: false } })).error?.status, 404);
+   await Schedule.updateOne({ _id: id }, { $set: { nextRunAt: new Date('2026-10-12T09:00:00Z') } });
+   const now = new Date('2026-10-13T10:00:00Z');
+   await Promise.all([runDueSchedules(now), runDueSchedules(now)]);
+   const saved = await Schedule.findById(id);
+   assert.equal(saved.nextRunAt.toISOString(), '2026-10-14T09:00:00.000Z');
+   assert.equal(await Note.countDocuments({ generationKey: 'schedule:' + id + ':2026-10-12T09:00:00.000Z' }), 1);
+   assert.equal((await Note.findById(saved.lastNoteId)).content, 'Plan the day');
+   assert.ifError((await invoke(scheduling.changeSchedule, { scheduleId: id, body: { isActive: false } })).error);
+   const paused = await Schedule.findById(id);
+   await runDueSchedules(new Date('2027-01-01T00:00:00Z'));
+   assert.equal((await Schedule.findById(id)).lastNoteId.toString(), paused.lastNoteId.toString());
+   assert.ifError((await invoke(scheduling.changeSchedule, { scheduleId: id, body: { isActive: true } })).error);
+   await Note.updateOne({ _id: template.id }, { $set: { isTemplate: false } });
+   await Schedule.updateOne({ _id: id }, { $set: { nextRunAt: now } });
+   await runDueSchedules(now);
+   assert.equal((await Schedule.findById(id)).isActive, false);
+   assert.match((await Schedule.findById(id)).error, /Template unavailable/);
+   assert.equal((await invoke(scheduling.changeSchedule, { scheduleId: id, method: 'DELETE' })).status, 204);
   });
  } finally {
   await shutdownCollaborationServer();

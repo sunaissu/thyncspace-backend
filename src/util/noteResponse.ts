@@ -25,6 +25,7 @@ export const toNoteResponse = (note: SerializableNote, userId: string) => {
 
   delete value.__v;
   delete value.history;
+  delete value.generationKey;
   if (!isOwner) { delete value.notebook; delete value.tags; delete value.sourcePath; delete value.isTemplate; delete value.isArchived; }
   delete value.collaborationState;
 

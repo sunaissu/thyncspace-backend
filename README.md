@@ -179,3 +179,23 @@ The server waits for the device and workspace unique indexes before listening.
 Deploy backend and frontend together: pre-update collaboration tokens lack session
 binding and are rejected, so existing clients must reconnect and obtain fresh tokens.
 Session discovery starts with each device's first authenticated request after rollout.
+
+## Daily notes and recurring templates
+
+POST /api/notes/daily takes { date: "YYYY-MM-DD", templateId? } and returns the same
+owned note for that date. DailyNote has a unique owner/date ledger. Creating content
+and its ledger entry is transactional; trash recovery moves the ledger pointer in
+the same recovery transaction. A permanently removed daily note can be recreated.
+
+GET/POST /api/notes/schedules lists/creates owner-only schedules. Creation requires
+title (1–120 characters), templateId, cadence (daily/weekly), time (HH:mm UTC), and
+weekday (0–6, Sunday first). PATCH /api/notes/schedules/:scheduleId accepts isActive;
+DELETE removes a schedule without removing generated notes. A unique owner/slot
+index enforces the 20-schedule cap across processes.
+
+The server starts a minute worker after index initialization and waits for it during
+graceful shutdown. A pass processes up to 25 due schedules. Each transaction creates
+one private template copy and advances nextRunAt together; generation keys prevent
+duplicate occurrences under retry. Downtime produces one catch-up note, then the
+next future occurrence. Missing/invalid templates pause instead of blocking the queue.
+No external scheduler or browser session is required.

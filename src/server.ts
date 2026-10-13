@@ -9,6 +9,10 @@ import { connectCache, disconnectCache } from "./util/cache.js";
 import env from "./util/validateEnv.js";
 import DeviceSession from "./models/deviceSession.model.js";
 import Workspace from "./models/workspace.model.js";
+import Note from "./models/note.model.js";
+import Daily from "./models/dailyNote.model.js";
+import NoteSchedule from "./models/noteSchedule.model.js";
+import { startNoteScheduler, stopNoteScheduler } from "./services/noteSchedules.js";
 
 const server = createServer(app);
 server.requestTimeout = 30_000;
@@ -37,6 +41,7 @@ const shutdown = async (signal: string) => {
   });
 
   try {
+    await stopNoteScheduler();
     await shutdownCollaborationServer();
     await httpClosed;
     disconnectCache();
@@ -62,8 +67,9 @@ mongoose
   })
   .then(async () => {
     // Unique indexes must exist before concurrent first-session/preference writes.
-    await Promise.all([DeviceSession.init(), Workspace.init()]);
+    await Promise.all([DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init()]);
     void connectCache();
+    startNoteScheduler();
     server.listen(env.PORT, env.HOST, () => {
       console.log(`Server listening on ${env.HOST}:${env.PORT}`);
     });
