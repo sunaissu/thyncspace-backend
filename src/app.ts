@@ -20,6 +20,7 @@ import { getCacheStatus } from "./util/cache.js";
 import { summarizeError } from "./util/errorLogging.js";
 import { sanitizeRequestTarget } from "./util/requestLogging.js";
 import "./util/passport.js";
+import { trackDeviceSession } from "./util/deviceSessions.js";
 
 const app = express();
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -115,6 +116,7 @@ app.use(
 
 app.use(passport.initialize());
 app.use(passport.session());
+app.use(trackDeviceSession);
 app.use(requireCsrfProtection);
 
 app.use("/api/notes", noteRoutes);

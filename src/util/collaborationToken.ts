@@ -7,6 +7,7 @@ export interface CollaborationTokenPayload {
   expiresAt: number;
   noteId: string;
   userId: string;
+  sessionHash: string;
 }
 
 const sign = (payload: string) =>
@@ -14,9 +15,10 @@ const sign = (payload: string) =>
     .update(payload)
     .digest("base64url");
 
-export const createCollaborationToken = (noteId: string, userId: string) => {
+export const createCollaborationToken = (noteId: string, userId: string, sessionHash: string) => {
+  if (!/^[a-f0-9]{64}$/.test(sessionHash)) throw new Error("A device session is required");
   const encodedPayload = Buffer.from(
-    JSON.stringify({ noteId, userId, expiresAt: Date.now() + TOKEN_LIFETIME_MS }),
+    JSON.stringify({ noteId, userId, sessionHash, expiresAt: Date.now() + TOKEN_LIFETIME_MS }),
   ).toString("base64url");
   return `${encodedPayload}.${sign(encodedPayload)}`;
 };
@@ -45,6 +47,7 @@ export const verifyCollaborationToken = (
     typeof payload.noteId !== "string" ||
     !("userId" in payload) ||
     typeof payload.userId !== "string" ||
+    !("sessionHash" in payload) || typeof payload.sessionHash !== "string" || !/^[a-f0-9]{64}$/.test(payload.sessionHash) ||
     !("expiresAt" in payload) ||
     typeof payload.expiresAt !== "number" ||
     !payload.noteId ||

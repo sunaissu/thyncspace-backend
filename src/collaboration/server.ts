@@ -1,4 +1,6 @@
 import { parsePresence } from "../util/presence.js";
+import { assertActiveDeviceSession } from "../util/deviceSessions.js";
+import DeviceSession from "../models/deviceSession.model.js";
 import { collaborationSnapshot } from "../util/collaborationSnapshot.js";
 import { createHash } from "node:crypto";
 import { Hocuspocus } from "@hocuspocus/server";
@@ -24,6 +26,7 @@ interface DurableStoreAttempt {
 }
 
 interface CollaborationContext {
+  sessionHash?: string;
   durableStoreAttempt?: DurableStoreAttempt;
   expiresAt: number;
   lastAccessCheck: number;
@@ -195,6 +198,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
   async onAuthenticate({ documentName, token, connectionConfig }) {
     const payload = verifyCollaborationToken(token);
     if (payload.noteId !== documentName) throw new Error("Token note mismatch");
+    await assertActiveDeviceSession(payload.sessionHash, payload.userId);
     const { permission, note } = await getAccess(documentName, payload.userId);
     const user = await UserModel.findById(payload.userId).select("username").exec();
     if (!user) throw new Error("User not found");
@@ -205,6 +209,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
       lastAccessCheck: Date.now(),
       permission,
       userId: payload.userId,
+      sessionHash: payload.sessionHash,
       username: user.username,
     };
   },
@@ -212,6 +217,8 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
     const payload = verifyCollaborationToken(token);
     if (payload.noteId !== documentName) throw new Error("Token note mismatch");
     if (payload.userId !== context.userId) throw new Error("Token user mismatch");
+    if (payload.sessionHash !== context.sessionHash) throw new Error("Token session mismatch");
+    await assertActiveDeviceSession(payload.sessionHash, payload.userId);
     const { permission, note } = await getAccess(documentName, payload.userId);
     connection.readOnly = permission !== PermissionLevel.Editor;
     context.noteType = note.type;
@@ -220,6 +227,7 @@ export const collaborationServer = new Hocuspocus<CollaborationContext>({
     context.permission = permission;
   },
   async beforeSync({ context, documentName, connection, document, type, payload }) {
+    if (context.sessionHash) await assertActiveDeviceSession(context.sessionHash, context.userId);
     if (context.expiresAt <= Date.now()) {
       throw new Error("Collaboration token expired");
     }
@@ -451,6 +459,12 @@ export const disconnectNote = (noteId: string) => {
     .forEach((connection) => connection.close());
 };
 
+export const disconnectDeviceSession = (sessionHash: string) => {
+  collaborationServer.documents.forEach(document => document.getConnections().forEach(connection => {
+    if (connection.context.sessionHash === sessionHash) connection.close();
+  }));
+};
+
 /** Close live editors and wait for every pending collaboration save to finish. */
 export const shutdownCollaborationServer = async () => {
   collaborationServer.closeConnections();
@@ -497,6 +511,16 @@ export const shutdownCollaborationServer = async () => {
 };
 
 const revalidateActiveConnections = async () => {
+  const sessionHashes = [...new Set([...collaborationServer.documents.values()].flatMap(document => document.getConnections().map(connection => connection.context.sessionHash).filter((value): value is string => Boolean(value))))];
+  let activeSessions: Set<string>;
+  try {
+    const devices = await DeviceSession.find({ sessionHash: { $in: sessionHashes }, revokedAt: null, expiresAt: { $gt: new Date() } }).select("+sessionHash").exec();
+    activeSessions = new Set(devices.map(device => device.sessionHash));
+  } catch {
+    // Fail closed when revocation state cannot be verified.
+    collaborationServer.closeConnections();
+    return;
+  }
   const tasks: Promise<void>[] = [];
   collaborationServer.documents.forEach((document, noteId) => {
     tasks.push((async () => {
@@ -509,7 +533,7 @@ const revalidateActiveConnections = async () => {
           .exec();
         document.getConnections().forEach((connection) => {
           const context = connection.context as CollaborationContext | undefined;
-          if (!context || context.expiresAt <= Date.now() || !note) {
+          if (!context || context.expiresAt <= Date.now() || !note || (context.sessionHash && !activeSessions.has(context.sessionHash))) {
             connection.close();
             return;
           }

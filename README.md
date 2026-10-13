@@ -158,3 +158,24 @@ versions reject cross-process races with 409 instead of silently losing changes.
 Responses carry revision so clients can ignore out-of-order replies.
 
 Organization also accepts isArchived (boolean). Bulk organization accepts { action: "archive", noteIds, isArchived }, with the same transactional ownership checks as bulk move. This owner-only flag does not change active collaboration status or sharing. Collaborator projections omit it. Archived notes remain in the owned-note API so clients can offer search and recovery from archive. Saved workspace searches accept view: "archived".
+
+## Session revocation
+
+GET /api/users/sessions lists up to 100 current account sessions; DELETE
+/api/users/sessions/:deviceId revokes one owned session. Authentication and existing
+origin/CSRF checks apply. Raw cookie IDs and session fingerprints are never returned.
+The ledger stores an HMAC fingerprint, a bounded browser user-agent description,
+first/last request timestamps and expiry. Revocation tombstones remain until expiry
+to prevent a stale cookie from registering itself again.
+
+Authenticated requests check this ledger. Logout and remote sign-out close matching
+live connections. Collaboration tokens must carry the originating session fingerprint;
+authentication, token refresh and incoming document sync check active session status.
+The periodic connection check also rejects expired/revoked sessions and fails closed
+if revocation storage is unavailable. Trusted internal note updates do not use browser
+tokens. The supported deployment still has one authoritative collaboration process.
+
+The server waits for the device and workspace unique indexes before listening.
+Deploy backend and frontend together: pre-update collaboration tokens lack session
+binding and are rejected, so existing clients must reconnect and obtain fresh tokens.
+Session discovery starts with each device's first authenticated request after rollout.

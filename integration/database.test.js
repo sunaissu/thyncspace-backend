@@ -14,14 +14,17 @@ const { default: Note } = await import('../dist/models/note.model.js');
 const notes = await import('../dist/controller/notes.js');
 const library = await import('../dist/controller/noteLibrary.js');
 const workspace = await import('../dist/controller/workspace.js');
+const devices = await import('../dist/controller/deviceSessions.js');
+const deviceUtil = await import('../dist/util/deviceSessions.js');
+const { default: DeviceSession } = await import('../dist/models/deviceSession.model.js');
 const { default: Workspace } = await import('../dist/models/workspace.model.js');
 const { collaborationServer, shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
 const owner = new mongoose.Types.ObjectId().toString();
 const stranger = new mongoose.Types.ObjectId().toString();
-async function invoke(handler, { noteId, versionId, body = {}, userId = owner } = {}) {
+async function invoke(handler, { noteId, versionId, deviceId, sessionID = "test-current-session", body = {}, userId = owner } = {}) {
  const result = {};
  const response = { status(code) { result.status = code; return this; }, json(body) { result.body = body; return this; }, sendStatus(code) { result.status = code; return this; } };
- await handler({ user: { id: userId }, params: { noteId, versionId }, body }, response, error => { result.error = error; });
+ await handler({ user: { id: userId }, params: { noteId, versionId, deviceId }, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
  return result;
 }
 
@@ -30,6 +33,33 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
  try {
   await mongoose.connect(replica.getUri(), { dbName: 'disposable_review' });
   await Workspace.init();
+  await DeviceSession.init();
+  await t.test('device sessions bind live tokens and revoke only the selected owner session', async () => {
+   for (const sessionID of ['test-current-session', 'other-session']) assert.ifError((await invoke(deviceUtil.trackDeviceSession, { sessionID })).error);
+   const hash = deviceUtil.sessionFingerprint('other-session');
+   let list = await invoke(devices.listDeviceSessions);
+   assert.equal(list.body.length, 2); assert.equal(list.body.filter(device => device.current).length, 1);
+   assert.equal(JSON.stringify(list.body).includes(hash), false);
+   const other = list.body.find(device => !device.current);
+   assert.equal((await invoke(devices.revokeDeviceSession, { deviceId: other.id, userId: stranger })).error?.status, 404);
+   assert.equal((await invoke(devices.revokeDeviceSession, { deviceId: 'invalid' })).error?.status, 400);
+   await deviceUtil.assertActiveDeviceSession(hash, owner);
+   await assert.rejects(deviceUtil.assertActiveDeviceSession(hash, stranger), /Session expired/);
+   const { createCollaborationToken, verifyCollaborationToken } = await import('../dist/util/collaborationToken.js');
+   const token = createCollaborationToken(new mongoose.Types.ObjectId().toString(), owner, hash);
+   assert.equal(verifyCollaborationToken(token).sessionHash, hash);
+   assert.throws(() => createCollaborationToken('note', owner, undefined), /device session/);
+   const revoked = await invoke(devices.revokeDeviceSession, { deviceId: other.id });
+   assert.ifError(revoked.error); assert.equal(revoked.body.current, false);
+   await assert.rejects(deviceUtil.assertActiveDeviceSession(hash, owner), /Session expired/);
+   const stale = await invoke(deviceUtil.trackDeviceSession, { sessionID: 'other-session' });
+   assert.equal(stale.error?.status, 401); assert.equal(stale.destroyed, true);
+   assert.ok((await DeviceSession.findById(other.id)).revokedAt);
+   list = await invoke(devices.listDeviceSessions); assert.equal(list.body.length, 1);
+   const current = await invoke(devices.revokeDeviceSession, { deviceId: list.body[0].id });
+   assert.equal(current.body.current, true); assert.equal(current.destroyed, true);
+  });
+
   await t.test('workspace pins, recent notes and searches are bounded and account isolated', async () => {
    const own = await Note.create({ owner, title: 'Pinned', type: 'document' });
    const shared = await Note.create({ owner: stranger, title: 'Shared', type: 'document', sharedWith: [{ userId: owner, permission: 'viewer' }] });

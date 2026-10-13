@@ -7,6 +7,8 @@ import {
 } from "./collaboration/server.js";
 import { connectCache, disconnectCache } from "./util/cache.js";
 import env from "./util/validateEnv.js";
+import DeviceSession from "./models/deviceSession.model.js";
+import Workspace from "./models/workspace.model.js";
 
 const server = createServer(app);
 server.requestTimeout = 30_000;
@@ -58,13 +60,16 @@ mongoose
     minPoolSize: 1,
     serverSelectionTimeoutMS: 10_000,
   })
-  .then(() => {
+  .then(async () => {
+    // Unique indexes must exist before concurrent first-session/preference writes.
+    await Promise.all([DeviceSession.init(), Workspace.init()]);
     void connectCache();
     server.listen(env.PORT, env.HOST, () => {
       console.log(`Server listening on ${env.HOST}:${env.PORT}`);
     });
   })
-  .catch((error) => {
-    console.error("MongoDB connection failed", error);
+  .catch(async (error) => {
+    console.error("Database startup failed", error);
+    await mongoose.disconnect();
     process.exitCode = 1;
   });

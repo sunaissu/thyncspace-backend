@@ -7,6 +7,7 @@ import UserModel from "../models/user.model.js";
 import * as NoteRepository from "../repositories/note.repository.js";
 import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums.js";
 import { createCollaborationToken } from "../util/collaborationToken.js";
+import { sessionFingerprint } from "../util/deviceSessions.js";
 import {
   cacheKeys,
   invalidateOwnedNotesCache,
@@ -411,7 +412,7 @@ export const createRealtimeToken: RequestHandler = async (req, res, next) => {
     if (!hasAccess) {
       throw createHttpError(403, "You do not have access to this note");
     }
-    res.status(200).json({ token: createCollaborationToken(noteId, userId) });
+    res.status(200).json({ token: createCollaborationToken(noteId, userId, sessionFingerprint(req.sessionID)) });
   } catch (error) {
     next(error);
   }
