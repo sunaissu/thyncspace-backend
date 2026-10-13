@@ -10,6 +10,7 @@ const noteSchema = new Schema(
       default: NoteType.Document,
     },
     content: { type: String, maxlength: 1024 * 1024 },
+    attachmentRevision: { type: Number, default: 0, select: false },
     contentRevision: { type: Number, default: 0, min: 0 },
     status: {
       type: String,

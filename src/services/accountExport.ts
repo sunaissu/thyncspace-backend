@@ -1,3 +1,4 @@
+import Attachment from "../models/attachment.model.js";
 import AuthAction from "../models/authAction.model.js";
 import AuthMail from "../models/authMail.model.js";
 import { emailKey } from "./authMail.js";
@@ -24,6 +25,8 @@ export async function* accountExport(owner: string) {
   yield line("authentication", await UserAuth.findOne({ userId: owner }).select("authProvider createdAt updatedAt -_id").lean().exec());
   yield line("workspace", await Workspace.findOne({ owner }).select("-__v").lean().exec());
   yield line("deletionRequest", await PrivacyRequest.findOne({ owner }).select("-__v").lean().exec());
+  const attachments = Attachment.find({ owner }).select("+data +ocrText").cursor();
+  try { for await (const file of attachments) yield line("attachment", { id: file.id, name: file.name, mime: file.mime, bytes: file.bytes, references: file.references, ocrText: file.ocrText, indexedAt: file.indexedAt, data: file.data.toString("base64") }); } finally { await attachments.close(); }
   const notes = Note.find({ owner }).select("+history +activity").sort({ _id: 1 }).cursor();
   try {
     for await (const note of notes) yield line("ownedNote", { ...toNoteResponse(note, owner), history: note.history, activity: note.activity });

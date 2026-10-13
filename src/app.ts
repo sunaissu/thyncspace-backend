@@ -9,6 +9,7 @@ import session from "express-session";
 import MongoStore from "connect-mongo";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
+import attachmentRoutes from "./routes/attachments.route.js";
 import noteRoutes from "./routes/notes.route.js";
 import userRoutes from "./routes/user.route.js";
 import authRoutes from "./routes/auth.route.js";
@@ -39,7 +40,6 @@ app.use(
         : false,
   }),
 );
-app.use(express.json({ limit: "5mb", strict: true }));
 morgan.token("safe-url", (request) =>
   sanitizeRequestTarget((request as Request).originalUrl ?? request.url),
 );
@@ -70,6 +70,7 @@ app.use("/api", (_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   next();
 }, apiLimiter);
+app.use(express.json({ limit: "5mb", strict: true }));
 
 app.get("/healthz", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -121,6 +122,7 @@ app.use(trackDeviceSession);
 app.use(requireMatchingAccount);
 app.use(requireCsrfProtection);
 
+app.use("/api/attachments", attachmentRoutes);
 app.use("/api/notes", noteRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/auth", authRoutes);

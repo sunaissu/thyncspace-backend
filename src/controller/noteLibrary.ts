@@ -1,3 +1,5 @@
+import Attachment from "../models/attachment.model.js";
+import { copyAttachmentReferences } from "../services/attachments.js";
 import { activityEntry, activityPush } from "../util/noteActivity.js";
 import type { RequestHandler } from "express";
 import mongoose from "mongoose";
@@ -128,6 +130,7 @@ export const recoverNote: RequestHandler = async (req, res, next) => {
       try {
         await session.withTransaction(async () => {
           const [copy] = await NoteModel.create([input], { session });
+          await copyAttachmentReferences(noteId, String(input._id), !versionId, session);
           if (!versionId) {
             await Daily.updateOne({ owner: userId, noteId }, { $set: { noteId: input._id } }, { session }).exec();
             const result = await NoteModel.deleteOne({ _id: noteId, owner: userId, status: NoteStatus.Trashed }, { session }).exec();
@@ -174,8 +177,14 @@ export const permanentlyDeleteTrash: RequestHandler = async (req, res, next) => 
     const noteId = validId(req.params.noteId), userId = ownerId(req);
     if (req.body?.confirmation !== noteId) throw createHttpError(400, "Explicit note confirmation is required");
     await withNoteMutationLock(noteId, async () => {
-      const result = await NoteModel.deleteOne({ _id: noteId, owner: userId, status: NoteStatus.Trashed }).exec();
-      if (result.deletedCount !== 1) throw createHttpError(404, "Trashed note not found");
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          const result = await NoteModel.deleteOne({ _id: noteId, owner: userId, status: NoteStatus.Trashed }, { session }).exec();
+          if (result.deletedCount !== 1) throw createHttpError(404, "Trashed note not found");
+          await Attachment.updateMany({ references: noteId }, { $pull: { references: noteId } }, { session }).exec();
+        });
+      } finally { await session.endSession(); }
       await invalidateOwnedNotesCache(userId);
       res.sendStatus(204);
     });

@@ -19,6 +19,7 @@ Object.entries(requiredTestEnvironment).forEach(([name, value]) => {
 const Y = await import('yjs');
 const { default: mongoose } = await import('mongoose');
 const { default: NoteModel } = await import('../dist/models/note.model.js');
+const { default: Attachment } = await import('../dist/models/attachment.model.js');
 const { default: Daily } = await import('../dist/models/dailyNote.model.js');
 const { NoteType } = await import('../dist/types/_enums.js');
 const { validateCollaborationUpdate, collaborationServer } = await import('../dist/collaboration/server.js');
@@ -87,13 +88,14 @@ test('history capture is atomic with content and keeps at most five prior snapsh
   assert.equal(mutation.$push.history.$each[0].content, 'old'); document.destroy();
 });
 test('trash recovery creates a new private identity and consumes the source in one transaction', async t => {
-  const original = { daily: Daily.updateOne, find: NoteModel.findOne, create: NoteModel.create, remove: NoteModel.deleteOne, session: mongoose.startSession };
-  t.after(() => { Daily.updateOne = original.daily; NoteModel.findOne = original.find; NoteModel.create = original.create; NoteModel.deleteOne = original.remove; mongoose.startSession = original.session; });
+  const original = { attachment: Attachment.updateMany, daily: Daily.updateOne, find: NoteModel.findOne, create: NoteModel.create, remove: NoteModel.deleteOne, session: mongoose.startSession };
+  t.after(() => { Attachment.updateMany = original.attachment; Daily.updateOne = original.daily; NoteModel.findOne = original.find; NoteModel.create = original.create; NoteModel.deleteOne = original.remove; mongoose.startSession = original.session; });
   let created, deleted = false, transaction = false;
   const source = { title: 'Recovered', content: 'retained', type: NoteType.Document, notebook: 'Work', tags: ['math'], history: [] };
   NoteModel.findOne = filter => { const query = { select: () => query, exec: async () => filter._id === noteId ? source : created }; return query; };
   mongoose.startSession = async () => ({ withTransaction: async action => { transaction = true; await action(); return { ok: 1 }; }, endSession: async () => {} });
   NoteModel.create = async ([input]) => { assert.ok(transaction); assert.notEqual(input._id.toString(), noteId); created = new NoteModel(input); return [created]; };
+  Attachment.updateMany = (filter, mutation, options) => ({ exec: async () => { assert.ok(transaction); assert.ok(options.session); assert.equal(filter.references, noteId); return { modifiedCount: 0 }; } });
   Daily.updateOne = (filter, mutation, options) => ({ exec: async () => { assert.ok(transaction); assert.ok(options.session); assert.equal(filter.owner, owner); assert.equal(filter.noteId, noteId); assert.equal(mutation.$set.noteId.toString(), created.id); return { matchedCount: 0 }; } });
   NoteModel.deleteOne = filter => ({ exec: async () => { assert.equal(filter.owner, owner); assert.equal(filter.status, 'trashed'); deleted = true; return { deletedCount: 1 }; } });
   const result = await invoke(recoverNote); assert.equal(result.error, undefined); assert.equal(result.status, 201); assert.ok(deleted);

@@ -7,6 +7,8 @@ import {
 } from "./collaboration/server.js";
 import { connectCache, disconnectCache } from "./util/cache.js";
 import env from "./util/validateEnv.js";
+import Attachment from "./models/attachment.model.js";
+import AttachmentQuota from "./models/attachmentQuota.model.js";
 import User from "./models/user.model.js";
 import UserAuth from "./models/userAuth.model.js";
 import AuthAction from "./models/authAction.model.js";
@@ -74,7 +76,7 @@ mongoose
   })
   .then(async () => {
     // Unique indexes must exist before concurrent first-session/preference writes.
-    await Promise.all([DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init(), AuthAction.init(), AuthMail.init(), User.init(), UserAuth.init()]);
+    await Promise.all([DeviceSession.init(), Workspace.init(), Note.init(), Daily.init(), NoteSchedule.init(), PrivacyRequest.init(), AuthAction.init(), AuthMail.init(), User.init(), UserAuth.init(), Attachment.init(), AttachmentQuota.init()]);
     void connectCache();
     startNoteScheduler();
     startAuthMailWorker();

@@ -21,10 +21,10 @@ const { default: Workspace } = await import('../dist/models/workspace.model.js')
 const { collaborationServer, shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
 const owner = new mongoose.Types.ObjectId().toString();
 const stranger = new mongoose.Types.ObjectId().toString();
-async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
+async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, attachmentId, query = {}, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
  const result = {};
  const response = { status(code) { result.status = code; return this; }, json(body) { result.body = body; return this; }, sendStatus(code) { result.status = code; return this; } };
- await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId }, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
+ await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId, attachmentId }, query, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
  return result;
 }
 
@@ -427,6 +427,49 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    timeline = await invoke(getNoteActivity, { noteId: source.id });
    assert.equal(timeline.body.events.length, 100);
    assert.equal((await invoke(getNoteActivity, { noteId: 'bad-id' })).error?.status, 400);
+  });
+  await t.test('attachment quota, concurrent deduplication, note access and restored references stay consistent', async () => {
+   const { default: Attachment } = await import('../dist/models/attachment.model.js');
+   const { default: Quota } = await import('../dist/models/attachmentQuota.model.js');
+   const files = await import('../dist/controller/attachments.js');
+   const { accessibleAttachment } = await import('../dist/services/attachments.js');
+   await Promise.all([Attachment.init(), Quota.init()]);
+   const upload = { name: 'Reference.txt', mime: 'text/plain', data: Buffer.from('Attachment fixture').toString('base64'), owner: stranger };
+   const uploaded = await Promise.all([1, 2].map(() => invoke(files.uploadAttachment, { body: upload })));
+   uploaded.forEach(result => assert.ifError(result.error));
+   const id = uploaded[0].body.id; assert.equal(uploaded[1].body.id, id);
+   assert.equal(uploaded[0].body.owner, owner); assert.equal((await Quota.findOne({ owner })).count, 1);
+   await assert.rejects(accessibleAttachment(id, stranger), /not found/);
+   const source = await Note.create({ owner, title: 'File source', content: 'Initial', sharedWith: [{ userId: stranger, permission: 'viewer' }] });
+   const other = await Note.create({ owner: stranger, title: 'Foreign private attachment note' });
+   assert.equal((await invoke(files.referenceAttachment, { attachmentId: id, body: { noteId: other.id } })).error?.status, 404);
+   assert.ifError((await invoke(files.referenceAttachment, { attachmentId: id, body: { noteId: source.id } })).error);
+   assert.equal((await accessibleAttachment(id, stranger, true)).data.toString(), 'Attachment fixture');
+   assert.equal((await invoke(files.referenceAttachment, { attachmentId: id, userId: stranger, body: { noteId: source.id }, method: 'DELETE' })).error?.status, 404);
+   const asPeer = await invoke(files.listAttachments, { userId: stranger, query: { noteId: source.id } });
+   assert.ifError(asPeer.error); assert.equal(asPeer.body.files.length, 1); assert.equal(asPeer.body.files[0].data, undefined);
+   assert.equal((await invoke(files.listAttachments, { query: { q: 'Reference' } })).body.files.length, 1);
+   assert.equal((await invoke(files.listAttachments, { query: { q: '.*' } })).body.files.length, 0);
+   await Note.updateOne({ _id: source.id }, { $set: { sharedWith: [] } });
+   await assert.rejects(accessibleAttachment(id, stranger), /not found/);
+   assert.ifError((await invoke(notes.deleteNote, { noteId: source.id })).error);
+   const restored = await invoke(library.recoverNote, { noteId: source.id }); assert.ifError(restored.error);
+   const references = (await Attachment.findById(id)).references;
+   assert.deepEqual(references, [String(restored.body._id)]);
+   const restoredId = String(restored.body._id);
+   assert.ifError((await invoke(notes.deleteNote, { noteId: restoredId })).error);
+   assert.ifError((await invoke(library.permanentlyDeleteTrash, { noteId: restoredId, body: { confirmation: restoredId } })).error);
+   assert.deepEqual((await Attachment.findById(id)).references, []);
+   const priorBytes = (await Quota.findOne({ owner })).bytes;
+   await Quota.updateOne({ owner }, { $set: { count: 100 } });
+   assert.equal((await invoke(files.uploadAttachment, { body: { ...upload, data: Buffer.from('Another fixture').toString('base64') } })).error?.status, 409);
+   assert.equal((await Quota.findOne({ owner })).bytes, priorBytes);
+   await Quota.updateOne({ owner }, { $set: { count: 1 } });
+   assert.equal((await invoke(files.deleteAttachment, { attachmentId: id, userId: stranger, body: { confirmation: id } })).error?.status, 404);
+   assert.equal((await invoke(files.deleteAttachment, { attachmentId: id, body: { confirmation: 'wrong' } })).error?.status, 400);
+   assert.ifError((await invoke(files.deleteAttachment, { attachmentId: id, body: { confirmation: id } })).error);
+   assert.equal((await Quota.findOne({ owner })).bytes, 0); assert.equal((await Quota.findOne({ owner })).count, 0);
+   await assert.rejects(accessibleAttachment(id, owner), /not found/);
   });
  } finally {
   await shutdownCollaborationServer();
