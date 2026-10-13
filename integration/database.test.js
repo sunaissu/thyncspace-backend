@@ -21,10 +21,10 @@ const { default: Workspace } = await import('../dist/models/workspace.model.js')
 const { collaborationServer, shutdownCollaborationServer } = await import('../dist/collaboration/server.js');
 const owner = new mongoose.Types.ObjectId().toString();
 const stranger = new mongoose.Types.ObjectId().toString();
-async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, attachmentId, query = {}, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
+async function invoke(handler, { noteId, versionId, deviceId, scheduleId, targetUserId, attachmentId, sourceId, query = {}, method = "POST", sessionID = "test-current-session", body = {}, userId = owner } = {}) {
  const result = {};
  const response = { status(code) { result.status = code; return this; }, json(body) { result.body = body; return this; }, sendStatus(code) { result.status = code; return this; } };
- await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId, attachmentId }, query, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
+ await handler({ user: { id: userId }, params: { noteId, versionId, deviceId, scheduleId, userId: targetUserId, attachmentId, sourceId }, query, method, body, sessionID, get: () => "Integration browser", session: { cookie: { expires: new Date(Date.now() + 3600000) }, destroy(callback) { result.destroyed = true; callback(); } } }, response, error => { result.error = error; });
  return result;
 }
 
@@ -440,6 +440,37 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    timeline = await invoke(getNoteActivity, { noteId: source.id });
    assert.equal(timeline.body.events.length, 100);
    assert.equal((await invoke(getNoteActivity, { noteId: 'bad-id' })).error?.status, 400);
+  });
+  await t.test('linked previews require host and source access, retain revision checks and restore privately', async () => {
+   const embeds = await import('../dist/controller/noteEmbeds.js');
+   const host = await Note.create({ owner, title: 'Embed host', sharedWith: [{ userId: stranger, permission: 'viewer' }] });
+   const source = await Note.create({ owner, title: 'Private source title', content: 'Private source body' });
+   const body = { action: 'add', sourceId: source.id.toUpperCase(), expectedRevision: 0 };
+   assert.equal((await invoke(embeds.updateEmbeds, { noteId: host.id, userId: stranger, body })).error?.status, 404);
+   assert.equal((await invoke(embeds.updateEmbeds, { noteId: host.id, body: { ...body, sourceId: host.id } })).error?.status, 400);
+   assert.ifError((await invoke(embeds.updateEmbeds, { noteId: host.id, body })).error);
+   const hidden = await invoke(embeds.listEmbeds, { noteId: host.id, userId: stranger }); assert.ifError(hidden.error);
+   assert.equal(hidden.body.entries[0].available, false); assert.equal(hidden.body.entries[0].title, 'Unavailable source');
+   assert.equal(JSON.stringify(hidden.body).includes('Private source'), false);
+   assert.equal((await invoke(embeds.previewEmbed, { noteId: host.id, sourceId: source.id, userId: stranger })).error?.status, 404);
+   await Note.updateOne({ _id: source.id }, { $set: { sharedWith: [{ userId: stranger, permission: 'viewer' }] } });
+   assert.equal((await invoke(embeds.previewEmbed, { noteId: host.id, sourceId: source.id, userId: stranger })).body.content, 'Private source body');
+   await Note.updateOne({ _id: source.id }, { $set: { content: 'New source body', contentRevision: 1 } });
+   assert.equal((await invoke(embeds.listEmbeds, { noteId: host.id })).body.entries[0].stale, true);
+   assert.equal((await invoke(embeds.updateEmbeds, { noteId: host.id, body: { action: 'review', sourceId: source.id, expectedRevision: 1, expectedSourceRevision: 0 } })).error?.status, 409);
+   const reviews = await Promise.all([1, 2].map(() => invoke(embeds.updateEmbeds, { noteId: host.id, body: { action: 'review', sourceId: source.id, expectedRevision: 1, expectedSourceRevision: 1 } })));
+   assert.equal(reviews.filter(result => !result.error).length, 1); assert.equal(reviews.find(result => result.error).error.status, 409);
+   assert.equal((await invoke(embeds.listEmbeds, { noteId: host.id })).body.entries[0].stale, false);
+   await Note.updateOne({ _id: host.id }, { $set: { sharedWith: [] } });
+   assert.equal((await invoke(embeds.previewEmbed, { noteId: host.id, sourceId: source.id, userId: stranger })).error?.status, 404);
+   assert.ifError((await invoke(notes.deleteNote, { noteId: host.id })).error);
+   const restored = await invoke(library.recoverNote, { noteId: host.id }); assert.ifError(restored.error);
+   assert.equal(restored.body.linkedSources[0].noteId, source.id); assert.deepEqual(restored.body.sharedWith, []);
+   const restoredId = String(restored.body._id);
+   assert.equal((await invoke(embeds.previewEmbed, { noteId: restoredId, sourceId: source.id })).body.content, 'New source body');
+   await Note.updateOne({ _id: source.id }, { $set: { status: 'trashed' } });
+   assert.equal((await invoke(embeds.previewEmbed, { noteId: restoredId, sourceId: source.id })).error?.status, 404);
+   assert.ifError((await invoke(embeds.updateEmbeds, { noteId: restoredId, body: { action: 'remove', sourceId: source.id, expectedRevision: 0 } })).error);
   });
   await t.test('private reminders preserve task provenance, reject concurrent changes and pause inaccessible sources', async () => {
    const { default: Reminders } = await import('../dist/models/reminders.model.js');

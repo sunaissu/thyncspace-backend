@@ -123,7 +123,7 @@ export const recoverNote: RequestHandler = async (req, res, next) => {
       if (versionId && !version) throw createHttpError(404, "Version not found");
       const content = validateNoteContentForType(version?.content ?? source.content ?? "", source.type);
       const input = { _id: new mongoose.Types.ObjectId(), owner: userId, title: version?.title ?? source.title, type: source.type, content,
-        notebook: source.notebook, tags: source.tags, sourcePath: source.sourcePath, activity: [...(versionId ? [] : source.activity ?? []), activityEntry("restore", userId, { sourceNoteId: noteId, sourceVersionId: versionId })].slice(-100) };
+        notebook: source.notebook, tags: source.tags, sourcePath: source.sourcePath, linkedSources: source.linkedSources, activity: [...(versionId ? [] : source.activity ?? []), activityEntry("restore", userId, { sourceNoteId: noteId, sourceVersionId: versionId })].slice(-100) };
       // Trash restoration consumes the tombstone atomically; version recovery
       // deliberately leaves the original note and history intact.
       const session = await mongoose.startSession();

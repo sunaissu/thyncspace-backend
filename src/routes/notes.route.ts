@@ -1,3 +1,4 @@
+import * as Embeds from "../controller/noteEmbeds.js";
 import * as Reminders from "../controller/reminders.js";
 import { getNoteActivity } from "../controller/noteActivity.js";
 import express from "express";
@@ -61,6 +62,9 @@ router.get("/shared", NoteController.getSharedNotes);
 router.get("/favorites", NoteController.getFavoriteNotes);
 router.post("/", creationLimiter, NoteController.createNote);
 router.post("/import", creationLimiter, NoteController.importNotes);
+router.get("/:noteId/embeds", Embeds.listEmbeds);
+router.get("/:noteId/embeds/:sourceId", Embeds.previewEmbed);
+router.patch("/:noteId/embeds", Embeds.updateEmbeds);
 router.get("/:noteId/activity", getNoteActivity);
 router.get("/:noteId/history", Library.getHistory);
 router.get("/:noteId/history/:versionId", Library.getVersion);

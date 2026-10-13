@@ -7,7 +7,7 @@ import Quota from "../models/attachmentQuota.model.js";
 import Note from "../models/note.model.js";
 
 export const ATTACHMENT_LIMITS = { fileBytes: 2 * 1024 * 1024, accountBytes: 50 * 1024 * 1024, count: 100, references: 100, pixels: 12_000_000 };
-export const attachmentId = (value: unknown) => { if (typeof value !== "string" || !/^[a-f0-9]{24}$/i.test(value)) throw createHttpError(400, "Invalid attachment or note ID"); return value; };
+export const attachmentId = (value: unknown) => { if (typeof value !== "string" || !/^[a-f0-9]{24}$/i.test(value)) throw createHttpError(400, "Invalid attachment or note ID"); return value.toLowerCase(); };
 export const noteAccessFilter = (userId: string, edit = false) => ({ status: "active", $or: [{ owner: userId }, { sharedWith: { $elemMatch: { userId, ...(edit ? { permission: "editor" } : {}) } } }] });
 let imageDecodes = 0;
 export async function validateAttachment(input: unknown) {

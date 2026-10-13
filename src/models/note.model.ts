@@ -10,6 +10,8 @@ const noteSchema = new Schema(
       default: NoteType.Document,
     },
     content: { type: String, maxlength: 1024 * 1024 },
+    linkedSources: { type: [new Schema({ noteId: { type: String, required: true }, sourceRevision: { type: Number, required: true } }, { _id: false })], default: [] },
+    embedRevision: { type: Number, default: 0 },
     attachmentRevision: { type: Number, default: 0, select: false },
     contentRevision: { type: Number, default: 0, min: 0 },
     status: {
