@@ -5,6 +5,8 @@ import { attachmentId, noteAccessFilter } from "../services/attachments.js";
 import { activityEntry, activityPush } from "../util/noteActivity.js";
 import { invalidateOwnedNotesCache } from "../util/cache.js";
 
+import { validateLinkedSelection, validateSelectionSource } from "../util/linkedSelection.js";
+
 const actor = (req: Parameters<RequestHandler>[0]) => { if (!req.user) throw createHttpError(401, "Authentication required"); return req.user.id; };
 const revisionFilter = (revision: number) => revision === 0 ? { $or: [{ embedRevision: 0 }, { embedRevision: { $exists: false } }] } : { embedRevision: revision };
 async function list(noteId: string, userId: string) {
@@ -23,10 +25,11 @@ export const listEmbeds: RequestHandler = async (req, res, next) => {
 export const previewEmbed: RequestHandler = async (req, res, next) => {
   try {
     const userId = actor(req), noteId = attachmentId(req.params.noteId), sourceId = attachmentId(req.params.sourceId);
-    if (!await Note.exists({ _id: noteId, ...noteAccessFilter(userId), "linkedSources.noteId": sourceId })) throw createHttpError(404, "Linked source not found");
+    const host = await Note.findOne({ _id: noteId, ...noteAccessFilter(userId), "linkedSources.noteId": sourceId }).select("linkedSources").exec();
+    if (!host) throw createHttpError(404, "Linked source not found");
     const source = await Note.findOne({ _id: sourceId, ...noteAccessFilter(userId) }).select("title type content contentRevision updatedAt").exec();
     if (!source) throw createHttpError(404, "Linked source not found");
-    res.json({ noteId: source.id, title: source.title, type: source.type, content: source.content ?? "", revision: source.contentRevision, updatedAt: source.updatedAt });
+    res.json({ noteId: source.id, title: source.title, type: source.type, content: source.content ?? "", revision: source.contentRevision, updatedAt: source.updatedAt, selection: validateLinkedSelection(host.linkedSources.find(link => link.noteId === sourceId)?.selection) });
   } catch (error) { next(error); }
 };
 export const updateEmbeds: RequestHandler = async (req, res, next) => {
@@ -37,19 +40,20 @@ export const updateEmbeds: RequestHandler = async (req, res, next) => {
     const host = await Note.findOne({ _id: noteId, ...noteAccessFilter(userId, true) }).select("linkedSources embedRevision owner").exec();
     if (!host) throw createHttpError(404, "Editable note not found");
     if ((host.embedRevision ?? 0) !== revision) throw createHttpError(409, "Linked sources changed. Refresh before editing");
-    const entries = host.linkedSources.map(link => ({ noteId: link.noteId, sourceRevision: link.sourceRevision })), index = entries.findIndex(link => link.noteId === sourceId);
+    const entries = host.linkedSources.map(link => ({ noteId: link.noteId, sourceRevision: link.sourceRevision, selection: validateLinkedSelection(link.selection) })), index = entries.findIndex(link => link.noteId === sourceId);
     const action = req.body?.action;
     if (action === "remove") { if (index < 0) throw createHttpError(404, "Linked source not found"); entries.splice(index, 1); }
-    else if (action === "add" || action === "review") {
-      const source = await Note.findOne({ _id: sourceId, ...noteAccessFilter(userId) }).select("contentRevision").exec();
+    else if (action === "add" || action === "review" || action === "select") {
+      const source = await Note.findOne({ _id: sourceId, ...noteAccessFilter(userId) }).select("contentRevision type content").exec();
       if (!source) throw createHttpError(404, "Accessible source not found");
       if (action === "add") {
         if (index >= 0) throw createHttpError(409, "This source is already linked");
         if (entries.length >= 20) throw createHttpError(409, "A note may have at most 20 linked sources");
-        entries.push({ noteId: sourceId, sourceRevision: source.contentRevision });
+        entries.push({ noteId: sourceId, sourceRevision: source.contentRevision, selection: null });
       } else {
         if (index < 0) throw createHttpError(404, "Linked source not found");
         if (req.body?.expectedSourceRevision !== source.contentRevision) throw createHttpError(409, "The source changed again. Refresh its preview before marking it reviewed");
+        if (action === "select") { const selection = validateLinkedSelection(req.body?.selection); validateSelectionSource(selection, source); entries[index].selection = selection; }
         entries[index].sourceRevision = source.contentRevision;
       }
     } else throw createHttpError(400, "Unknown linked-source action");

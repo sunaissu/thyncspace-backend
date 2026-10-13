@@ -11,7 +11,7 @@ const noteSchema = new Schema(
     },
     content: { type: String, maxlength: 1024 * 1024 },
     sharedNotebookId: { type: Schema.Types.ObjectId, default: null, index: true },
-    linkedSources: { type: [new Schema({ noteId: { type: String, required: true }, sourceRevision: { type: Number, required: true } }, { _id: false })], default: [] },
+    linkedSources: { type: [new Schema({ noteId: { type: String, required: true }, sourceRevision: { type: Number, required: true }, selection: { type: Schema.Types.Mixed, default: null } }, { _id: false })], default: [] },
     embedRevision: { type: Number, default: 0 },
     discussionRevision: { type: Number, default: 0, select: false },
     attachmentRevision: { type: Number, default: 0, select: false },

@@ -10,6 +10,8 @@ import { validateNoteTitle, validateNoteType, validateNoteContentForType, valida
 import { NoteType } from "../types/_enums.js";
 import { invalidateOwnedNotesCache } from "../util/cache.js";
 
+import { validateLinkedSelection, type LinkedSelection } from "../util/linkedSelection.js";
+
 export const ARCHIVE_LIMITS = { notes: 1000, files: 100, bytes: 175 * 1024 * 1024, fileBytes: 50 * 1024 * 1024 };
 export const archiveHash = (value: string) => createHash("sha256").update(value).digest("hex");
 const expiry = () => new Date(Date.now() + 6 * 60 * 60 * 1000);
@@ -25,7 +27,7 @@ export async function* exportWorkspace(owner: string) {
   try { for await (const note of cursor) {
     if (++notes > ARCHIVE_LIMITS.notes) throw createHttpError(413, "Workspace exceeds the 1,000-note archive limit");
     ids.push(note.id); if (note.status === "active") activeIds.push(note.id);
-    yield record({ kind: "note", id: note.id, data: { title: note.title, type: note.type, content: Buffer.from(note.content ?? "", "utf8").toString("base64"), contentEncoding: "base64", status: note.status, notebook: note.notebook, tags: note.tags, sourcePath: note.sourcePath, isTemplate: note.isTemplate, isArchived: note.isArchived, linkedSources: note.linkedSources.map(link => ({ noteId: link.noteId, sourceRevision: link.sourceRevision })) } });
+    yield record({ kind: "note", id: note.id, data: { title: note.title, type: note.type, content: Buffer.from(note.content ?? "", "utf8").toString("base64"), contentEncoding: "base64", status: note.status, notebook: note.notebook, tags: note.tags, sourcePath: note.sourcePath, isTemplate: note.isTemplate, isArchived: note.isArchived, linkedSources: note.linkedSources.map(link => ({ noteId: link.noteId, sourceRevision: link.sourceRevision, selection: validateLinkedSelection(link.selection) })) } });
   } } finally { await cursor.close(); }
   const idSet = new Set(ids);
   const attachments = Attachment.find({ $or: [{ owner }, { references: { $in: activeIds } }] }).select("+data +ocrText").sort({ _id: 1 }).cursor();
@@ -53,7 +55,7 @@ export async function startArchive(owner: string, input: { clientId?: unknown; d
   catch (error) { if (error && typeof error === "object" && "code" in error && error.code === 11000) throw createHttpError(409, "An archive import already started. Refresh its status"); throw error; }
 }
 
-interface ArchivedNote { title: string; type: NoteType; content: string; status: "active" | "trashed"; notebook: string; tags: string[]; sourcePath?: string; isTemplate?: boolean; isArchived?: boolean; linkedSources: Array<{ noteId: string; sourceRevision: number }> }
+interface ArchivedNote { title: string; type: NoteType; content: string; status: "active" | "trashed"; notebook: string; tags: string[]; sourcePath?: string; isTemplate?: boolean; isArchived?: boolean; linkedSources: Array<{ noteId: string; sourceRevision: number; selection: LinkedSelection | null }> }
 interface ArchivedFile { name: string; mime: string; data: string; bytes: number; hash: string; references: string[]; ocrText: string }
 export async function validateArchiveRecord(value: unknown, owner?: string) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw createHttpError(400, "Invalid archive record");
@@ -70,9 +72,9 @@ export async function validateArchiveRecord(value: unknown, owner?: string) {
     if (typeof content !== "string" || !["active", "trashed"].includes(String(data.status)) || !Array.isArray(data.linkedSources) || data.linkedSources.length > 20) throw createHttpError(400, "Invalid archived note");
     const linkedSources = data.linkedSources.map((item: unknown) => {
       if (!item || typeof item !== "object") throw createHttpError(400, "Invalid source link");
-      const link = item as { noteId: unknown; sourceRevision: unknown };
+      const link = item as { noteId: unknown; sourceRevision: unknown; selection?: unknown };
       if (!Number.isSafeInteger(link.sourceRevision) || Number(link.sourceRevision) < 0) throw createHttpError(400, "Invalid source revision");
-      return { noteId: attachmentId(link.noteId), sourceRevision: Number(link.sourceRevision) };
+      return { noteId: attachmentId(link.noteId), sourceRevision: Number(link.sourceRevision), selection: validateLinkedSelection(link.selection) };
     });
     const payload: ArchivedNote = { title: validateNoteTitle(data.title), type, content, status: data.status as "active" | "trashed", ...validateNoteOrganization(data), sourcePath: validateSourcePath(data.sourcePath), linkedSources };
     return { kind, sourceId, payload: JSON.stringify(payload), fileBytes: 0, title: payload.title, sourcePath: payload.sourcePath };
@@ -150,7 +152,7 @@ export async function commitArchive(owner: string, id: unknown) {
         const value = JSON.parse(item.payload) as ArchivedNote;
         await Note.create([{ ...value, _id: ids.get(item.sourceId), owner, sharedWith: [], sharedNotebookId: null, favoritedBy: [], contentRevision: 0,
           content: validateNoteContentForType(value.type === NoteType.Document ? remapArchiveLinks(value.content, ids, name => resolve(name, value.sourcePath, ids.get(item.sourceId)!)) : value.content, value.type),
-          linkedSources: value.linkedSources.filter(link => link.noteId !== item.sourceId).map(link => ({ noteId: ids.get(link.noteId) ?? link.noteId, sourceRevision: ids.has(link.noteId) ? 0 : link.sourceRevision })),
+          linkedSources: value.linkedSources.filter(link => link.noteId !== item.sourceId).map(link => ({ noteId: ids.get(link.noteId) ?? link.noteId, sourceRevision: ids.has(link.noteId) ? 0 : link.sourceRevision, selection: link.selection && ids.has(link.noteId) ? { ...link.selection, needsReview: true } : link.selection })),
           ...(value.status === "trashed" ? { trashedAt: new Date() } : {}),
         }], { session });
       } else {

@@ -583,6 +583,28 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.equal((await invoke(embeds.previewEmbed, { noteId: restoredId, sourceId: source.id })).error?.status, 404);
    assert.ifError((await invoke(embeds.updateEmbeds, { noteId: restoredId, body: { action: 'remove', sourceId: source.id, expectedRevision: 0 } })).error);
   });
+  await t.test('linked selections bind to a source revision and reject invalid ranges, IDs and viewer changes', async () => {
+   const embeds = await import('../dist/controller/noteEmbeds.js');
+   const source = await Note.create({ owner, title: 'Line source', content: 'first\nsecond\nthird' });
+   const host = await Note.create({ owner, title: 'Selected host', sharedWith: [{ userId: stranger, permission: 'viewer' }], linkedSources: [{ noteId: source.id, sourceRevision: 0 }] });
+   const input = { action: 'select', sourceId: source.id, expectedRevision: 0, expectedSourceRevision: 0, selection: { kind: 'lines', start: 2, end: 2, revision: 0 } };
+   assert.equal((await invoke(embeds.updateEmbeds, { noteId: host.id, userId: stranger, body: input })).error?.status, 404);
+   for (const selection of [{ ...input.selection, start: 0 }, { ...input.selection, end: 4 }, { ...input.selection, revision: 1 }, { kind: 'elements', ids: ['missing'], revision: 0 }]) assert.ok((await invoke(embeds.updateEmbeds, { noteId: host.id, body: { ...input, selection } })).error);
+   assert.ifError((await invoke(embeds.updateEmbeds, { noteId: host.id, body: input })).error);
+   let preview = await invoke(embeds.previewEmbed, { noteId: host.id, sourceId: source.id }); assert.deepEqual(preview.body.selection, input.selection);
+   await Note.updateOne({ _id: source.id }, { $set: { content: 'inserted\nfirst\nsecond\nthird', contentRevision: 1 } });
+   assert.equal((await invoke(embeds.updateEmbeds, { noteId: host.id, body: { ...input, expectedRevision: 1 } })).error?.status, 409);
+   assert.ifError((await invoke(embeds.updateEmbeds, { noteId: host.id, body: { action: 'review', sourceId: source.id, expectedRevision: 1, expectedSourceRevision: 1 } })).error);
+   preview = await invoke(embeds.previewEmbed, { noteId: host.id, sourceId: source.id }); assert.equal(preview.body.selection.revision, 0); assert.equal(preview.body.revision, 1);
+   assert.ifError((await invoke(embeds.updateEmbeds, { noteId: host.id, body: { ...input, expectedRevision: 2, expectedSourceRevision: 1, selection: null } })).error);
+   assert.equal((await invoke(embeds.previewEmbed, { noteId: host.id, sourceId: source.id })).body.selection, null);
+   const board = await Note.create({ owner, title: 'Board source', type: 'whiteboard', content: JSON.stringify({ elements: [{ id: 'visible' }, { id: 'deleted', isDeleted: true }] }) });
+   host.linkedSources = [{ noteId: board.id, sourceRevision: 0 }]; await host.save();
+   const boardInput = { ...input, sourceId: board.id, expectedRevision: 3, selection: { kind: 'elements', ids: ['visible'], revision: 0 } };
+   for (const ids of [['deleted'], ['visible', 'visible'], ['missing']]) assert.equal((await invoke(embeds.updateEmbeds, { noteId: host.id, body: { ...boardInput, selection: { ...boardInput.selection, ids } } })).error?.status, 400);
+   assert.ifError((await invoke(embeds.updateEmbeds, { noteId: host.id, body: boardInput })).error);
+   assert.deepEqual((await invoke(embeds.previewEmbed, { noteId: host.id, sourceId: board.id })).body.selection.ids, ['visible']);
+  });
   await t.test('private reminders preserve task provenance, reject concurrent changes and pause inaccessible sources', async () => {
    const { default: Reminders } = await import('../dist/models/reminders.model.js');
    const reminders = await import('../dist/controller/reminders.js');

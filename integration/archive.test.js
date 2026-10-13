@@ -18,7 +18,7 @@ test('portable archives restore privately and atomically with resumable uploads'
   await Promise.all([Note.init(), Attachment.init(), Quota.init(), ArchiveImport.init(), ArchiveItem.init()]);
   const owner = oid(), target = oid(), stranger = oid();
   const board = await Note.create({ owner, title: 'Board', type: 'whiteboard', content: JSON.stringify({ elements: [], viewport: { panX: 0, panY: 0, zoom: 1 } }) });
-  const source = await Note.create({ owner, title: 'Document', content: `[[${board.id}|Sketch]]\n[[Board#section]]\n\n\`[[${board.id}]]\`\n\n\`\`\`md\n[[${board.id}]]\n\`\`\``, notebook: 'Research/Physics', sourcePath: 'Physics/Document.md', tags: ['physics'], isArchived: true, isTemplate: true, linkedSources: [{ noteId: board.id, sourceRevision: 2 }], sharedWith: [{ userId: stranger, permission: 'editor' }] });
+  const source = await Note.create({ owner, title: 'Document', content: `[[${board.id}|Sketch]]\n[[Board#section]]\n\n\`[[${board.id}]]\`\n\n\`\`\`md\n[[${board.id}]]\n\`\`\``, notebook: 'Research/Physics', sourcePath: 'Physics/Document.md', tags: ['physics'], isArchived: true, isTemplate: true, linkedSources: [{ noteId: board.id, sourceRevision: 2, selection: { kind: "elements", ids: ["removed-object"], revision: 2 } }], sharedWith: [{ userId: stranger, permission: 'editor' }] });
   await Note.create({ owner, title: 'Trash', status: 'trashed', content: 'Keep in trash' });
   const hidden = await Note.create({ owner: stranger, title: 'Other owner secret', content: 'NEVER EXPORT' });
   const file = await storeAttachment(owner, { name: 'data.txt', mime: 'text/plain', data: Buffer.from('Measurements').toString('base64') });
@@ -48,7 +48,7 @@ test('portable archives restore privately and atomically with resumable uploads'
    assert.equal(restored.length, 3); assert.equal(doc.notebook, 'Research/Physics'); assert.equal(doc.sourcePath, 'Physics/Document.md'); assert.deepEqual(doc.tags, ['physics']); assert.ok(doc.isArchived && doc.isTemplate);
    assert.equal(doc.sharedWith.length, 0); assert.equal(doc.sharedNotebookId, null); assert.equal(doc.contentRevision, 0);
    assert.ok(doc.content.startsWith(`[[${sketch.id}|Sketch]]`)); assert.ok(doc.content.includes(`[[${sketch.id}#section|Board#section]]`)); assert.ok(doc.content.includes('`[[' + board.id + ']]`')); assert.ok(doc.content.includes('```md\n[[' + board.id + ']]'));
-   assert.equal(doc.linkedSources[0].noteId, sketch.id); assert.equal(doc.linkedSources[0].sourceRevision, 0); assert.equal(restored.find(note => note.title === 'Trash').status, 'trashed');
+   assert.equal(doc.linkedSources[0].noteId, sketch.id); assert.equal(doc.linkedSources[0].sourceRevision, 0); assert.deepEqual(doc.linkedSources[0].selection, { kind: 'elements', ids: ['removed-object'], revision: 2, needsReview: true }); assert.notEqual(doc.linkedSources[0].selection.revision, sketch.contentRevision); assert.equal(restored.find(note => note.title === 'Trash').status, 'trashed');
    const restoredFile = await Attachment.findOne({ owner: target }).select('+data'); assert.equal(restoredFile.data.toString(), 'Measurements'); assert.deepEqual(restoredFile.references, [doc.id]);
    assert.equal(await ArchiveItem.countDocuments({ owner: target }), 0); assert.equal((await api.commitArchive(target, id)).noteIds.length, 3); assert.equal(await Note.countDocuments({ owner: target }), 3);
   });
@@ -65,6 +65,7 @@ test('portable archives restore privately and atomically with resumable uploads'
    await api.startArchive(user, { clientId: id, digest: '0'.repeat(64), records: 3 });
    await assert.rejects(api.stageArchive(user, id, 0, { ...doc, data: { ...doc.data, sourcePath: '../secret' } }), /path/i);
    await assert.rejects(api.stageArchive(user, id, 0, { ...boardRow, data: { ...boardRow.data, content: Buffer.from('{"elements":[{"type":"script"}]}').toString('base64') } }), /Whiteboard/);
+   await assert.rejects(api.stageArchive(user, id, 0, { ...doc, data: { ...doc.data, linkedSources: [{ noteId: board.id, sourceRevision: 0, selection: { kind: 'lines', start: 0, end: 1, revision: 0 } }] } }), /lines/);
    await api.stageArchive(user, id, 0, doc); await assert.rejects(api.stageArchive(user, id, 1, doc)); assert.equal((await ArchiveImport.findById(user)).next, 1);
    await api.cancelArchive(user, id);
    const attachment = records.find(row => row.kind === 'attachment'), broken = { ...attachment, data: { ...attachment.data, references: [oid()] } }, second = await upload(user, [broken]);
