@@ -31,6 +31,7 @@ const noteSchema = new Schema(
     notebook: { type: String, default: "", maxlength: 80 },
     sourcePath: { type: String, maxlength: 1024 },
     isTemplate: { type: Boolean, default: false },
+    isArchived: { type: Boolean, default: false },
     tags: { type: [String], default: [] },
     trashedAt: { type: Date },
     history: { type: [new Schema({

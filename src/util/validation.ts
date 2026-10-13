@@ -457,7 +457,8 @@ export const validateNoteOrganization = (value: unknown) => {
     return tag.trim().toLowerCase();
   });
   if (value.isTemplate !== undefined && typeof value.isTemplate !== "boolean") throw createHttpError(400, "Template setting must be a boolean");
-  return { notebook, tags: [...new Set(tags)], ...(value.isTemplate === undefined ? {} : { isTemplate: value.isTemplate }) };
+  if (value.isArchived !== undefined && typeof value.isArchived !== "boolean") throw createHttpError(400, "Archive setting must be a boolean");
+  return { notebook, tags: [...new Set(tags)], ...(value.isTemplate === undefined ? {} : { isTemplate: value.isTemplate }), ...(value.isArchived === undefined ? {} : { isArchived: value.isArchived }) };
 };
 
 /** Imported paths are metadata, never filesystem destinations. */

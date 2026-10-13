@@ -69,14 +69,16 @@ export const bulkOrganization: RequestHandler = async (req, res, next) => {
     const userId = ownerId(req);
     const action = req.body?.action;
     let affected = 0;
-    if (action === "move") {
+    if (action === "move" || action === "archive") {
       if (!Array.isArray(req.body.noteIds) || !req.body.noteIds.length || req.body.noteIds.length > 100) throw createHttpError(400, "Select 1 to 100 owned notes");
       const ids = [...new Set<string>(req.body.noteIds.map(validId))];
-      const { notebook } = validateNoteOrganization({ notebook: req.body.notebook, tags: [] });
+      const organization = validateNoteOrganization({ notebook: action === "move" ? req.body.notebook : "", tags: [], ...(action === "archive" ? { isArchived: req.body.isArchived } : {}) });
+      if (action === "archive" && typeof req.body.isArchived !== "boolean") throw createHttpError(400, "Archive setting must be a boolean");
+      const changes = action === "move" ? { notebook: organization.notebook } : { isArchived: organization.isArchived };
       await session.withTransaction(async () => {
         const filter = { _id: { $in: ids }, owner: userId, status: NoteStatus.Active };
         if (await NoteModel.countDocuments(filter).session(session).exec() !== ids.length) throw createHttpError(404, "One or more owned notes are no longer available");
-        const result = await NoteModel.updateMany(filter, { $set: { notebook } }, { session, runValidators: true }).exec();
+        const result = await NoteModel.updateMany(filter, { $set: changes }, { session, runValidators: true }).exec();
         affected = result.matchedCount;
       });
     } else if (action === "rename-tag") {

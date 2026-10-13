@@ -156,3 +156,5 @@ Limits are 100 pins, 40 recent notes, and 20 saved searches. Pin/open checks cur
 note access. Mutations serialize per account within the process; optimistic database
 versions reject cross-process races with 409 instead of silently losing changes.
 Responses carry revision so clients can ignore out-of-order replies.
+
+Organization also accepts isArchived (boolean). Bulk organization accepts { action: "archive", noteIds, isArchived }, with the same transactional ownership checks as bulk move. This owner-only flag does not change active collaboration status or sharing. Collaborator projections omit it. Archived notes remain in the owned-note API so clients can offer search and recovery from archive. Saved workspace searches accept view: "archived".

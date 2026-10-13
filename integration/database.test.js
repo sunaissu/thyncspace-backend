@@ -109,6 +109,20 @@ test('real replica-set import, concurrent saves, history, trash and recovery', {
    assert.deepEqual(new Set((await Note.findById(second.id)).tags), new Set(['other', '$target']));
    assert.deepEqual((await Note.findById(foreign.id)).tags, ['old']);
   });
+  await t.test('archiving is reversible owner-only organization and never revokes sharing', async () => {
+   const first = await Note.create({ owner, title: 'Archive', type: 'document', content: 'keep', sharedWith: [{ userId: stranger, permission: 'editor' }] });
+   const foreign = await Note.create({ owner: stranger, title: 'Foreign archive', type: 'document' });
+   const invalid = await invoke(library.bulkOrganization, { body: { action: 'archive', noteIds: [first.id, foreign.id], isArchived: true } });
+   assert.equal(invalid.error?.status, 404); assert.equal((await Note.findById(first.id)).isArchived, false);
+   assert.equal((await invoke(library.bulkOrganization, { body: { action: 'archive', noteIds: [first.id], isArchived: { $ne: false } } })).error?.status, 400);
+   assert.ifError((await invoke(library.bulkOrganization, { body: { action: 'archive', noteIds: [first.id], isArchived: true } })).error);
+   const saved = await Note.findById(first.id);
+   assert.equal(saved.isArchived, true); assert.equal(saved.content, 'keep'); assert.equal(saved.sharedWith.length, 1);
+   const { toNoteResponse } = await import('../dist/util/noteResponse.js');
+   assert.equal(toNoteResponse(saved, stranger).isArchived, undefined);
+   assert.ifError((await invoke(library.updateOrganization, { noteId: first.id, body: { notebook: '', tags: [], isArchived: false } })).error);
+   assert.equal((await Note.findById(first.id)).isArchived, false);
+  });
   await t.test('only one concurrent save based on the same revision succeeds', async () => {
    const results = await Promise.all(['left', 'right'].map(text => invoke(notes.updatePrivateNote, { noteId, body: { text, expectedRevision: 0 } })));
    assert.equal(results.filter(r => r.status === 200).length, 1);
