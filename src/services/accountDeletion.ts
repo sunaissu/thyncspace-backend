@@ -1,3 +1,4 @@
+import { ArchiveImport, ArchiveItem } from "../models/archiveImport.model.js";
 import SharedNotebook from "../models/sharedNotebook.model.js";
 import Discussion from "../models/discussion.model.js";
 import Reminders from "../models/reminders.model.js";
@@ -44,6 +45,8 @@ export async function fulfillDeletionRequest(requestId: string, username: string
       await SharedNotebook.deleteMany({ owner }, { session }).exec();
       await SharedNotebook.updateMany({ "members.userId": owner }, { $pull: { members: { userId: owner } }, $inc: { revision: 1 } }, { session }).exec();
       await Note.deleteMany({ owner }, { session }).exec();
+      await ArchiveItem.deleteMany({ owner }, { session }).exec();
+      await ArchiveImport.deleteOne({ _id: owner }, { session }).exec();
       await Workspace.updateMany({ owner: { $ne: owner }, $or: [{ pinned: { $in: ids } }, { "recent.noteId": { $in: ids } }] }, { $pull: { pinned: { $in: ids }, recent: { noteId: { $in: ids } } }, $inc: { revision: 1 } }, { session }).exec();
       await Reminders.deleteOne({ owner }, { session }).exec();
       await Workspace.deleteOne({ owner }, { session }).exec();

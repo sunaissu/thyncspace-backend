@@ -1,3 +1,4 @@
+import * as Archive from "../controller/workspaceArchive.js";
 import * as Ai from "../controller/passageAi.js";
 import * as Notebooks from "../controller/sharedNotebooks.js";
 import * as Discussions from "../controller/discussions.js";
@@ -22,7 +23,7 @@ const mutationLimiter = rateLimit({
   standardHeaders: "draft-8",
   legacyHeaders: false,
   ipv6Subnet: 56,
-  skip: (req) => ["GET", "HEAD", "OPTIONS"].includes(req.method),
+  skip: (req) => ["GET", "HEAD", "OPTIONS"].includes(req.method) || req.path === "/archive/import",
   message: { error: "Too many note changes; please slow down." },
 });
 
@@ -45,6 +46,11 @@ const collaborationTokenLimiter = rateLimit({
 });
 
 router.use(requireAuth, mutationLimiter);
+const archiveLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 360, keyGenerator: req => req.user!.id, standardHeaders: "draft-8", legacyHeaders: false });
+const archiveExportLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 2, keyGenerator: req => req.user!.id, standardHeaders: "draft-8", legacyHeaders: false });
+router.get("/archive/export", archiveExportLimiter, Archive.downloadArchive);
+router.get("/archive/import", Archive.importArchive);
+router.post("/archive/import", archiveLimiter, Archive.importArchive);
 
 const aiAccountLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, keyGenerator: req => req.user!.id, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "You have reached the limit of five AI actions per hour" } });
 const aiWorkspaceLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 60, keyGenerator: () => "workspace", standardHeaders: "draft-8", legacyHeaders: false, message: { error: "The workspace AI limit was reached. Try again later" } });

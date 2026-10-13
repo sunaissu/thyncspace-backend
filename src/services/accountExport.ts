@@ -1,3 +1,4 @@
+import { ArchiveImport, ArchiveItem } from "../models/archiveImport.model.js";
 import SharedNotebook from "../models/sharedNotebook.model.js";
 import Discussion from "../models/discussion.model.js";
 import Reminders from "../models/reminders.model.js";
@@ -25,6 +26,9 @@ export async function* accountExport(owner: string) {
   const line = (kind: string, data: unknown) => { count++; return JSON.stringify({ kind, data }) + "\n"; };
   yield line("manifest", { format: "thyncspace-account", version: 1, startedAt: new Date().toISOString(), consistency: "Each record reflects its read time. Save pending edits before exporting." });
   yield line("profile", profile);
+  yield line("archiveImport", await ArchiveImport.findById(owner).select("-__v").lean().exec());
+  const staged = ArchiveItem.find({ owner }).select("+payload -__v").cursor();
+  try { for await (const record of staged) yield line("stagedArchiveRecord", record); } finally { await staged.close(); }
   yield line("authentication", await UserAuth.findOne({ userId: owner }).select("authProvider createdAt updatedAt -_id").lean().exec());
   yield line("reminders", await Reminders.findOne({ owner }).select("-__v").lean().exec());
   yield line("workspace", await Workspace.findOne({ owner }).select("-__v").lean().exec());
