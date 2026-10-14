@@ -1,0 +1,23 @@
+Release candidate 2026-10-14.1
+Repository: thyncspace/backend
+Package version: 2.0.0
+Branch: release/2026-10-review
+Local annotated tag: rc/2026-10-14.1
+Status: prepared for review; not published or deployed.
+
+Changes
+Session-bound collaboration, strict shared-state admission, private calculator boundaries, revision-safe writes, account recovery, owner-scoped storage, archives, attachments, notebooks, discussions and opt-in content-free metrics.
+
+Compatibility and rollout
+Node 24 and MongoDB replica-set transactions are required. Back up the database and attachment store. Startup creates the required concurrency indexes before listening. Deploy with the matching frontend and reconnect clients for session-bound collaboration credentials.
+
+Checks
+npm run check; npm run test:integration. Tests use disposable local replica sets.
+The dated workspace release manifest records completed local checks and exact commits.
+
+Collaboration protocol
+Token requests must declare protocol 1 and signed tokens must contain protocol 1. Missing/older protocol values are rejected. Existing clients must refresh; possession of a previous session-bound token alone does not permit reconnection. This is a compatibility gate, not a substitute for authentication and permissions.
+
+Limits and release gates
+Do not restore an older server against new live collaboration state without a coordinated data/client rollback. External provider delivery and production database/role configuration remain deployment checks.
+Fresh npm registry vulnerability checks remain pending permission to send dependency metadata. No production service or database was changed.

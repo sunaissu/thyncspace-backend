@@ -1,9 +1,12 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import env from "./validateEnv.js";
 
+export const COLLABORATION_PROTOCOL = 1;
+
 const TOKEN_LIFETIME_MS = 30 * 60 * 1000;
 
 export interface CollaborationTokenPayload {
+  protocol: typeof COLLABORATION_PROTOCOL;
   expiresAt: number;
   noteId: string;
   userId: string;
@@ -18,7 +21,7 @@ const sign = (payload: string) =>
 export const createCollaborationToken = (noteId: string, userId: string, sessionHash: string) => {
   if (!/^[a-f0-9]{64}$/.test(sessionHash)) throw new Error("A device session is required");
   const encodedPayload = Buffer.from(
-    JSON.stringify({ noteId, userId, sessionHash, expiresAt: Date.now() + TOKEN_LIFETIME_MS }),
+    JSON.stringify({ protocol: COLLABORATION_PROTOCOL, noteId, userId, sessionHash, expiresAt: Date.now() + TOKEN_LIFETIME_MS }),
   ).toString("base64url");
   return `${encodedPayload}.${sign(encodedPayload)}`;
 };
@@ -43,6 +46,7 @@ export const verifyCollaborationToken = (
   if (
     typeof payload !== "object" ||
     payload === null ||
+    !("protocol" in payload) || payload.protocol !== COLLABORATION_PROTOCOL ||
     !("noteId" in payload) ||
     typeof payload.noteId !== "string" ||
     !("userId" in payload) ||

@@ -352,3 +352,7 @@ Account privacy now offers an explicit Allow usage counts control, off by defaul
 Each row contains a random consent identity, UTC day and counters, capped at 1,000 events per account per day and expired after 90 days. Turning counts off deletes all retained rows in the same transaction as withdrawing consent. Concurrent event writes cannot recreate them. Re-enabling generates a fresh identity. Account export includes retained counts, and operator-fulfilled account deletion removes them. Pending metrics work is bounded and best effort; it never blocks a successful note response.
 
 After a backend build, operators can run `node dist/metricsReport.js` for a read-only aggregate report. It includes participants, active days, event totals and D1/D7/D28 return counts since the first retained activity day. These are consenting-account API observations, not unique-note counts, measured activation, signup cohorts or revenue. No raw identities appear in the report. Anonymous signup tracking, calculator analytics and billing events are not collected. The roadmap's real retention evidence, cost figures and monetization gates still require operator measurements.
+
+## Collaboration compatibility
+
+Token requests must send JSON `{ "protocol": 1 }`. The backend rejects missing or incompatible versions with HTTP 409 before reading note data, and requires the same protocol in signed WebSocket tokens. Older tabs must refresh after rollout. Existing account authentication, device revocation and note permissions still apply.

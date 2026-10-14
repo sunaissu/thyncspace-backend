@@ -7,7 +7,7 @@ import NoteModel from "../models/note.model.js";
 import UserModel from "../models/user.model.js";
 import * as NoteRepository from "../repositories/note.repository.js";
 import { NoteStatus, NoteType, PermissionLevel } from "../types/_enums.js";
-import { createCollaborationToken } from "../util/collaborationToken.js";
+import { COLLABORATION_PROTOCOL, createCollaborationToken } from "../util/collaborationToken.js";
 import { sessionFingerprint } from "../util/deviceSessions.js";
 import {
   cacheKeys,
@@ -399,6 +399,9 @@ export const createRealtimeToken: RequestHandler = async (req, res, next) => {
   const noteId = req.params.noteId as string;
   try {
     requireValidNoteId(noteId);
+    if (req.body?.protocol !== COLLABORATION_PROTOCOL) {
+      throw createHttpError(409, "Your collaboration client is outdated. Refresh this page before joining.");
+    }
     const userId = getUserId(req);
     const note = await NoteModel.findOne({
       _id: noteId,
