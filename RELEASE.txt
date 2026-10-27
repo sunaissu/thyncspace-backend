@@ -1,7 +1,7 @@
 Release candidate 2026-10-14.1
 Repository: thyncspace/backend
 Package version: 2.0.0
-Branch: release/2026-10-review
+Branch: main
 Local annotated tag: rc/2026-10-14.1
 Status: prepared for review; not published or deployed.
 
