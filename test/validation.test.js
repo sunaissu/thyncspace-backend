@@ -47,6 +47,44 @@ test("accepts an explicit empty whiteboard", () => {
   });
 });
 
+const currentMetadata = {
+  hidden: true, displayName: "Hidden card",
+  link: { kind: "url", target: "https://example.test/board" },
+  ports: [{ id: "out", name: "Output", point: { x: 1, y: 0.5 }, accepts: ["arrow"] }],
+  documentCard: { documentId: "doc", revision: "2", title: "Excerpt", fallback: "Host-supplied text", stale: true },
+  calculation: { version: 1, expression: "x + 2", variables: { x: 3 }, result: "5" },
+};
+
+test("admits current Noteboard metadata, manual routes and host media references", () => {
+  const board = JSON.parse(validBoard);
+  Object.assign(board.elements[0], currentMetadata);
+  Object.assign(board.elements[1], { manualRoute: true, routing: "orthogonal", startBinding: { elementId: "shape-1", portId: "out", fixedPoint: { x: 1, y: 0.5 } } });
+  board.elements.push({ id: "asset", type: "image", x: 0, y: 0, width: 80, height: 50, dataUrl: "", assetId: "host-asset", mask: "ellipse", crop: { x: 0.1, y: 0.2, width: 0.5, height: 0.6 } });
+  const content = JSON.stringify(board);
+  assert.equal(validateNoteContentForType(content, NoteType.Whiteboard), content);
+  assert.deepEqual(parseWhiteboardContent(content), board);
+});
+
+test("rejects malformed current Noteboard metadata before saving", () => {
+  for (const invalid of [
+    { hidden: "true" }, { displayName: "x".repeat(257) }, { manualRoute: "yes" },
+    { link: { kind: "url", target: "javascript:alert(1)" } },
+    { link: { kind: ["url"], target: "javascript:alert(1)" } },
+    { ports: [{ ...currentMetadata.ports[0], point: { x: 2, y: 0 } }] },
+    { ports: [currentMetadata.ports[0], currentMetadata.ports[0]] },
+    { crop: { x: 0.8, y: 0, width: 0.5, height: 1 } }, { mask: "triangle" }, { assetId: "" },
+    { documentCard: { ...currentMetadata.documentCard, stale: "yes" } },
+    { calculation: { ...currentMetadata.calculation, variables: { x: Infinity } } },
+    { calculation: { ...currentMetadata.calculation, variables: [] } },
+    { startBinding: { elementId: "shape-1", fixedPoint: { x: 0, y: 0 }, portId: 7 } },
+  ]) {
+    const board = JSON.parse(validBoard);
+    Object.assign(board.elements[1], invalid);
+    assert.equal(parseWhiteboardContent(board), undefined, JSON.stringify(invalid));
+    assert.throws(() => validateNoteContentForType(JSON.stringify(board), NoteType.Whiteboard), error => error?.status === 400);
+  }
+});
+
 for (const [name, content] of [
   ["malformed JSON", "{"],
   ["missing elements", JSON.stringify({ viewport: { panX: 0, panY: 0, zoom: 1 } })],

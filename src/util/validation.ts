@@ -90,7 +90,55 @@ const isValidBinding = (value: unknown) =>
     typeof value.elementId === "string" &&
     value.elementId.length > 0 &&
     value.elementId.length <= MAX_ELEMENT_ID_LENGTH &&
+    (value.portId === undefined || (typeof value.portId === "string" && value.portId.length <= MAX_ELEMENT_ID_LENGTH)) &&
     isFinitePoint(value.fixedPoint));
+
+// Keep serialized metadata compatible with Noteboard's import schema. These
+// records describe board content; host adapters still own access and resolution.
+const hasValidBoardMetadata = (value: Record<string, unknown>) => {
+  const shortString = (field: unknown, limit: number) => typeof field === "string" && field.length <= limit;
+  const unit = (field: unknown) => typeof field === "number" && Number.isFinite(field) && field >= 0 && field <= 1;
+  if (value.link !== undefined) {
+    const link = value.link;
+    if (!isRecord(link) || typeof link.kind !== "string" || !["url", "object", "reference"].includes(link.kind) ||
+      !shortString(link.target, 4096) || !(link.target as string).trim()) return false;
+    if (link.kind === "url") {
+      try { if (!["http:", "https:", "mailto:"].includes(new URL(link.target as string).protocol)) return false; }
+      catch { return false; }
+    }
+  }
+  if (value.ports !== undefined) {
+    if (!Array.isArray(value.ports) || value.ports.length > 32) return false;
+    const ids = new Set<string>();
+    for (const port of value.ports) {
+      if (!isRecord(port) || !shortString(port.id, 256) || !port.id || !shortString(port.name, 256) ||
+        ids.has(port.id as string) || !isRecord(port.point) || !unit(port.point.x) || !unit(port.point.y) ||
+        !Array.isArray(port.accepts) || !port.accepts.length || !port.accepts.every(type => type === "line" || type === "arrow")) return false;
+      ids.add(port.id as string);
+    }
+  }
+  if (value.crop !== undefined) {
+    const crop = value.crop;
+    if (!isRecord(crop) || ![crop.x, crop.y, crop.width, crop.height].every(unit) ||
+      (crop.width as number) <= 0 || (crop.height as number) <= 0 ||
+      (crop.x as number) + (crop.width as number) > 1.000001 || (crop.y as number) + (crop.height as number) > 1.000001) return false;
+  }
+  if (value.mask !== undefined && value.mask !== "rectangle" && value.mask !== "ellipse") return false;
+  if (value.assetId !== undefined && (!shortString(value.assetId, 256) || !value.assetId)) return false;
+  if (value.documentCard !== undefined) {
+    const card = value.documentCard;
+    if (!isRecord(card) || !["documentId", "revision", "title", "fallback"].every(key => shortString(card[key], 10000)) ||
+      !card.documentId || (card.stale !== undefined && typeof card.stale !== "boolean")) return false;
+  }
+  if (value.calculation !== undefined) {
+    const calculation = value.calculation;
+    if (!isRecord(calculation) || !Number.isInteger(calculation.version) || (calculation.version as number) < 1 ||
+      !shortString(calculation.expression, 10000) || !shortString(calculation.result, 10000) || !isRecord(calculation.variables) ||
+      Object.keys(calculation.variables).length > 100 || !Object.entries(calculation.variables).every(([key, field]) =>
+        /^[a-zA-Z][\w]{0,63}$/.test(key) && typeof field === "number" && Number.isFinite(field))) return false;
+  }
+  return true;
+};
 
 const hasValidOptionalNumber = (
   value: Record<string, unknown>,
@@ -139,6 +187,7 @@ const isValidWhiteboardElement = (
   value: unknown,
 ): value is Record<string, unknown> => {
   if (!isRecord(value)) return false;
+  if (!hasValidBoardMetadata(value)) return false;
   if (
     typeof value.id !== "string" ||
     !value.id ||
@@ -179,9 +228,10 @@ const isValidWhiteboardElement = (
   ) {
     return false;
   }
-  for (const key of ["highlighter", "isDeleted", "isStar", "locked", "showLabel"]) {
+  for (const key of ["highlighter", "isDeleted", "isStar", "locked", "showLabel", "hidden", "manualRoute"]) {
     if (value[key] !== undefined && typeof value[key] !== "boolean") return false;
   }
+  if (value.displayName !== undefined && (typeof value.displayName !== "string" || value.displayName.length > 256)) return false;
   for (const key of [
     "backgroundColor",
     "fontFamily",
@@ -239,7 +289,7 @@ const isValidWhiteboardElement = (
     }
   }
 
-  if (["line", "arrow", "draw", "pen"].includes(value.type)) {
+  if (value.points !== undefined || ["line", "arrow", "draw", "pen"].includes(value.type)) {
     if (
       !Array.isArray(value.points) ||
       value.points.length > MAX_ELEMENT_POINTS ||
@@ -255,6 +305,7 @@ const isValidWhiteboardElement = (
     return false;
   }
   if (value.type === "text" && typeof value.text !== "string") return false;
+  if (value.name !== undefined && (typeof value.name !== "string" || value.name.length > MAX_ELEMENT_TEXT_LENGTH)) return false;
   if (
     value.label !== undefined &&
     (typeof value.label !== "string" || value.label.length > MAX_ELEMENT_TEXT_LENGTH)
@@ -262,7 +313,7 @@ const isValidWhiteboardElement = (
     return false;
   }
   if (
-    value.type === "image" &&
+    value.type === "image" && !(value.assetId && value.dataUrl === "") &&
     (typeof value.dataUrl !== "string" ||
       value.dataUrl.length > MAX_IMAGE_DATA_URL_LENGTH ||
       !/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(value.dataUrl) ||

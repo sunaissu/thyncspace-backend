@@ -99,6 +99,12 @@ tombstone in the same transaction. Historical recovery leaves the original live
 note untouched. Only server-saved content is recoverable; browser drafts remain
 a separate recovery path. The five-version history starts after this update.
 
+The October 19 package update validates current Noteboard metadata, including
+hidden objects, display names, manual connector routes, named ports, links, and
+image crop and asset references. The frontend preserves these fields through its
+sanitizer. Keep these frontend and backend updates together; the existing note
+size limit and host-owned recovery flows still apply.
+
 Existing records need no destructive migration: notebook/tags/history default
 to empty values. Back up MongoDB before rollout. Deploy backend before frontend;
 older frontends do not expose trash/history. Rolling back loses the new UI,
