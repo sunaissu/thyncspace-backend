@@ -1,7 +1,7 @@
 import { summarizeError } from "../util/errorLogging.js";
 import { hasWorkspaceAccess } from "../util/workspaceAccess.js";
 import { activityEntry, activityPush } from "../util/noteActivity.js";
-import { parsePresence } from "../util/presence.js";
+import { parsePresence, parseTextCaret } from "../util/presence.js";
 import { assertActiveDeviceSession } from "../util/deviceSessions.js";
 import DeviceSession from "../models/deviceSession.model.js";
 import { collaborationSnapshot } from "../util/collaborationSnapshot.js";
@@ -270,6 +270,7 @@ const collaborationHooks = {
       states.set(id, {
         user: { id: context.userId, name: context.username.slice(0, 80), color: context.presenceColor },
         cursor: parsePresence(state.cursor),
+        caret: parseTextCaret(state.caret),
       });
     }
   },

@@ -166,16 +166,25 @@ test('awareness binds one session to the authenticated owner and strips untruste
   const connection = { context, sendStateless() {} };
   const other = { context: { presenceClientId: 99, presenceColor: '#2563eb' } };
   const document = { getConnections: () => [connection, other] };
-  const states = new Map([[1, { user: { id: 'forged', name: 'Administrator', color: 'url(evil)' }, cursor: { surface: 'board', x: 12, y: 34 }, calculator: { secret: 5 } }], [123, {}]]);
+  const states = new Map([[1, { user: { id: 'forged', name: 'Administrator', color: 'url(evil)' }, cursor: { surface: 'board', x: 12, y: 34 }, caret: { surface: 'visual', block: 2, offset: 5, name: 'Forged caret owner', content: 'not a document edit' }, calculator: { secret: 5 } }], [123, {}]]);
   await collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states });
   assert.equal(states.size, 1);
   assert.deepEqual(states.get(1).user, { id: owner, name: 'Authenticated owner', color: '#b91c1c' });
   assert.equal(states.get(1).calculator, undefined);
   assert.deepEqual(states.get(1).cursor, { surface: 'board', x: 12, y: 34 });
+  assert.deepEqual(states.get(1).caret, { surface: 'visual', block: 2, offset: 5 });
   await assert.rejects(collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states: new Map([[99, { user: {} }]]) }), /collaboration request could not complete/);
   const impostor = { userId: 'other', username: 'Other', expiresAt: Date.now() + 60000 };
   await assert.rejects(collaborationServer.configuration.beforeHandleAwareness({ context: impostor, connection: { context: impostor }, document, states: new Map([[99, { user: {} }]]) }), /collaboration request could not complete/);
-  const invalid = new Map([[1, { user: {}, cursor: { surface: 'board', x: Infinity, y: 0 } }]]);
+  const invalid = new Map([[1, { user: {}, cursor: { surface: 'board', x: Infinity, y: 0 }, caret: { surface: 'visual', block: 0, offset: -1 } }]]);
   await collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states: invalid });
   assert.equal(invalid.get(1).cursor, null);
+  assert.equal(invalid.get(1).caret, null);
+  const keyboardOnly = new Map([[1, { user: {}, cursor: null, caret: { surface: 'markdown', block: 0, offset: 123 } }]]);
+  await collaborationServer.configuration.beforeHandleAwareness({ context, connection, document, states: keyboardOnly });
+  assert.deepEqual(keyboardOnly.get(1), {
+    user: { id: owner, name: 'Authenticated owner', color: '#b91c1c' },
+    cursor: null,
+    caret: { surface: 'markdown', block: 0, offset: 123 },
+  });
 });
