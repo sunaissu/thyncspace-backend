@@ -378,6 +378,84 @@ export const parseWhiteboardContent = (
   };
 };
 
+export interface DocumentationTextSection {
+  id: string;
+  type: "text";
+  title: string;
+  content: string;
+}
+export interface DocumentationBoardSection {
+  id: string;
+  type: "board";
+  title: string;
+  caption: string;
+  height: number;
+  elements: WhiteboardContent["elements"];
+  viewport: WhiteboardContent["viewport"];
+}
+export interface DocumentationContent {
+  format: "thyncspace-documentation";
+  version: 1;
+  sections: Array<DocumentationTextSection | DocumentationBoardSection>;
+}
+
+const BOARD_COMMON_FIELDS = ["id", "type", "x", "y", "width", "height", "angle", "strokeColor", "backgroundColor", "fillStyle", "strokeWidth", "strokeStyle", "opacity", "roughness", "seed", "isDeleted", "groupId", "locked", "hidden", "displayName", "blendMode"];
+const BOARD_TEXT_FIELDS = ["text", "fontSize", "fontFamily", "textAlign", "lineHeight", "highlightColor", "fontWeight", "fontStyle", "textDecoration"];
+const BOARD_TYPE_FIELDS: Record<string, string[]> = {
+  rectangle: [...BOARD_TEXT_FIELDS, "borderRadius"], ellipse: BOARD_TEXT_FIELDS,
+  diamond: BOARD_TEXT_FIELDS, triangle: BOARD_TEXT_FIELDS,
+  text: [...BOARD_TEXT_FIELDS, "baseline"],
+  line: ["points", "curveType", "routing", "manualRoute", "startArrowhead", "endArrowhead", "label", "labelFontSize", "labelFontFamily", "startBinding", "endBinding"],
+  arrow: ["points", "curveType", "routing", "manualRoute", "startArrowhead", "endArrowhead", "label", "labelFontSize", "labelFontFamily", "startBinding", "endBinding"],
+  draw: ["points"], pen: ["points", "highlighter", "tension"], image: ["dataUrl", "assetId", "mask"],
+  frame: ["name", "frameColor", "showLabel", "childIds"], star: [...BOARD_TEXT_FIELDS, "sides", "isStar", "innerRadius"],
+  "sticky-note": [...BOARD_TEXT_FIELDS, "noteColor"], callout: [...BOARD_TEXT_FIELDS, "tailDirection"],
+};
+const pickFields = (value: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(key => value[key] !== undefined).map(key => [key, value[key]]));
+
+/** Canonical serialized fields only; do not add renderer defaults to durable fingerprints. */
+export const canonicalWhiteboardElement = (value: Record<string, unknown>) => {
+  const output = pickFields(value, [...BOARD_COMMON_FIELDS, ...BOARD_TYPE_FIELDS[String(value.type)]]);
+  if (Array.isArray(value.points)) output.points = value.points.map(point => pickFields(point, ["x", "y", "pressure"]));
+  if (Array.isArray(value.childIds)) output.childIds = [...value.childIds];
+  for (const key of ["startBinding", "endBinding"]) if (isRecord(value[key])) {
+    const binding = value[key] as Record<string, unknown>;
+    output[key] = { ...pickFields(binding, ["elementId", "portId"]), fixedPoint: pickFields(binding.fixedPoint as Record<string, unknown>, ["x", "y"]) };
+  }
+  if (isRecord(value.dropShadow)) output.dropShadow = pickFields(value.dropShadow, ["blur", "offsetX", "offsetY", "color", "spread"]);
+  if (isRecord(value.link)) output.link = pickFields(value.link, ["kind", "target"]);
+  if (Array.isArray(value.ports)) output.ports = value.ports.map(port => ({ ...pickFields(port, ["id", "name"]), point: pickFields(port.point, ["x", "y"]), accepts: [...port.accepts] }));
+  if (isRecord(value.documentCard)) output.documentCard = pickFields(value.documentCard, ["documentId", "revision", "title", "fallback", "stale"]);
+  if (isRecord(value.calculation)) output.calculation = { ...pickFields(value.calculation, ["version", "expression", "result"]), variables: { ...(value.calculation.variables as Record<string, number>) } };
+  if (value.type === "image" && isRecord(value.crop)) output.crop = pickFields(value.crop, ["x", "y", "width", "height"]);
+  return output;
+};
+
+export const parseDocumentationContent = (content: unknown): DocumentationContent | undefined => {
+  if (content === "") return { format: "thyncspace-documentation", version: 1, sections: [] };
+  let parsed: unknown;
+  try {
+    if (Buffer.byteLength(typeof content === "string" ? content : JSON.stringify(content), "utf8") > MAX_NOTE_CONTENT_BYTES) return undefined;
+    parsed = typeof content === "string" ? JSON.parse(content) : content;
+  } catch { return undefined; }
+  if (!isRecord(parsed) || parsed.format !== "thyncspace-documentation" || parsed.version !== 1 || !Array.isArray(parsed.sections) || parsed.sections.length > 40) return undefined;
+  const ids = new Set<string>(), sections: DocumentationContent["sections"] = [];
+  for (const section of parsed.sections) {
+    if (!isRecord(section) || typeof section.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(section.id) || ids.has(section.id) || typeof section.title !== "string" || section.title.length > 120) return undefined;
+    ids.add(section.id);
+    if (section.type === "text") {
+      if (typeof section.content !== "string") return undefined;
+      sections.push({ id: section.id, type: "text", title: section.title, content: section.content });
+    } else if (section.type === "board") {
+      if (typeof section.caption !== "string" || section.caption.length > 500 || typeof section.height !== "number" || !Number.isFinite(section.height) || section.height < 280 || section.height > 900) return undefined;
+      const board = parseWhiteboardContent({ elements: section.elements, viewport: section.viewport });
+      if (!board) return undefined;
+      sections.push({ id: section.id, type: "board", title: section.title, caption: section.caption, height: section.height, elements: board.elements.map(canonicalWhiteboardElement), viewport: board.viewport });
+    } else return undefined;
+  }
+  return { format: "thyncspace-documentation", version: 1, sections };
+};
+
 export const normalizeEmail = (value: unknown) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 
@@ -458,6 +536,11 @@ export const validateNoteContent = (value: unknown) => {
 
 export const validateNoteContentForType = (value: unknown, type: NoteType) => {
   const content = validateNoteContent(value);
+  if (content !== undefined && type === NoteType.Documentation) {
+    const parsed = parseDocumentationContent(content);
+    if (!parsed) throw createHttpError(400, "Documentation content is invalid");
+    return JSON.stringify(parsed);
+  }
   if (
     content !== undefined &&
     type === NoteType.Whiteboard &&
@@ -471,7 +554,7 @@ export const validateNoteContentForType = (value: unknown, type: NoteType) => {
 export const validateNoteType = (value: unknown) => {
   if (value === undefined) return NoteType.Document;
   if (!Object.values(NoteType).includes(value as NoteType)) {
-    throw createHttpError(400, "Note type must be document or whiteboard");
+    throw createHttpError(400, "Note type must be document, whiteboard, or documentation");
   }
   return value as NoteType;
 };

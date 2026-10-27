@@ -6,7 +6,7 @@ import Attachment from "../models/attachment.model.js";
 import Quota from "../models/attachmentQuota.model.js";
 import { ArchiveImport, ArchiveItem } from "../models/archiveImport.model.js";
 import { ATTACHMENT_LIMITS, attachmentId, validateAttachment } from "./attachments.js";
-import { validateNoteTitle, validateNoteType, validateNoteContentForType, validateNoteOrganization, validateSourcePath } from "../util/validation.js";
+import { validateNoteTitle, validateNoteType, validateNoteContentForType, validateNoteOrganization, validateSourcePath, parseDocumentationContent } from "../util/validation.js";
 import { NoteType } from "../types/_enums.js";
 import { invalidateOwnedNotesCache } from "../util/cache.js";
 
@@ -130,6 +130,15 @@ export function remapArchiveLinks(content: string, ids: Map<string, string>, res
   }).join("\n");
 }
 
+export function remapArchivedNoteContent(content: string, type: NoteType, ids: Map<string, string>, resolveName?: (name: string) => string | undefined) {
+  if (type === NoteType.Document) return remapArchiveLinks(content, ids, resolveName);
+  if (type !== NoteType.Documentation) return content;
+  const documentation = parseDocumentationContent(content);
+  if (!documentation) throw createHttpError(400, "Invalid archived documentation");
+  return JSON.stringify({ ...documentation, sections: documentation.sections.map(section => section.type === "text"
+    ? { ...section, content: remapArchiveLinks(section.content, ids, resolveName) } : section) });
+}
+
 export async function commitArchive(owner: string, id: unknown) {
   const clientId = archiveClientId(id), session = await mongoose.startSession();
   let result: ReturnType<typeof archiveStatus> | undefined;
@@ -151,7 +160,7 @@ export async function commitArchive(owner: string, id: unknown) {
       if (item.kind === "note") {
         const value = JSON.parse(item.payload) as ArchivedNote;
         await Note.create([{ ...value, _id: ids.get(item.sourceId), owner, sharedWith: [], sharedNotebookId: null, favoritedBy: [], contentRevision: 0,
-          content: validateNoteContentForType(value.type === NoteType.Document ? remapArchiveLinks(value.content, ids, name => resolve(name, value.sourcePath, ids.get(item.sourceId)!)) : value.content, value.type),
+          content: validateNoteContentForType(remapArchivedNoteContent(value.content, value.type, ids, name => resolve(name, value.sourcePath, ids.get(item.sourceId)!)), value.type),
           linkedSources: value.linkedSources.filter(link => link.noteId !== item.sourceId).map(link => ({ noteId: ids.get(link.noteId) ?? link.noteId, sourceRevision: ids.has(link.noteId) ? 0 : link.sourceRevision, selection: link.selection && ids.has(link.noteId) ? { ...link.selection, needsReview: true } : link.selection })),
           ...(value.status === "trashed" ? { trashedAt: new Date() } : {}),
         }], { session });

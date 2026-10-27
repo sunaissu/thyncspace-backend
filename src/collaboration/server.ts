@@ -5,6 +5,7 @@ import { parsePresence, parseTextCaret } from "../util/presence.js";
 import { assertActiveDeviceSession } from "../util/deviceSessions.js";
 import DeviceSession from "../models/deviceSession.model.js";
 import { collaborationSnapshot } from "../util/collaborationSnapshot.js";
+import { documentationContentFromDocument, replaceDocumentationContent } from "../util/documentation.js";
 import { createHash } from "node:crypto";
 import { Hocuspocus, type Configuration } from "@hocuspocus/server";
 import type { Server as HttpServer } from "http";
@@ -19,6 +20,7 @@ import { invalidateOwnedNotesCache } from "../util/cache.js";
 import env from "../util/validateEnv.js";
 import {
   MAX_NOTE_CONTENT_BYTES,
+  parseDocumentationContent,
   parseWhiteboardContent,
   validateNoteTitle,
 } from "../util/validation.js";
@@ -83,6 +85,10 @@ const seedDocument = (
   content: unknown,
 ) => {
   if (title) document.getText(TITLE_KEY).insert(0, title);
+  if (type === NoteType.Documentation) {
+    replaceDocumentationContent(document, content);
+    return;
+  }
   if (type === NoteType.Document) {
     const value = typeof content === "string" ? content : "";
     if (value) document.getText(TEXT_KEY).insert(0, value);
@@ -326,7 +332,9 @@ const collaborationHooks = {
       if (encodedState.length > MAX_COLLABORATION_STATE_BYTES) {
         throw new Error("Collaboration document is too large to store safely");
       }
-      const content = note.type === NoteType.Document
+      const content = note.type === NoteType.Documentation
+        ? JSON.stringify(documentationContentFromDocument(document))
+        : note.type === NoteType.Document
         ? document.getText(TEXT_KEY).toString()
         : boardContentFromDocument(document);
       if (Buffer.byteLength(content, "utf8") > MAX_NOTE_CONTENT_BYTES) {
@@ -340,7 +348,9 @@ const collaborationHooks = {
       }
       const sharedTitle = document.getText(TITLE_KEY).toString();
       const title = sharedTitle ? validateNoteTitle(sharedTitle) : note.title;
-      const sameContent = note.type === NoteType.Document
+      const sameContent = note.type === NoteType.Documentation
+        ? JSON.stringify(parseDocumentationContent(note.content)) === content
+        : note.type === NoteType.Document
         ? note.content === content
         : JSON.stringify(parseWhiteboardContent(note.content)) === JSON.stringify(parseWhiteboardContent(content));
       const result = await NoteModel.updateOne(
@@ -415,7 +425,9 @@ export const updateNoteState = async (
         replaceText(document.getText(TITLE_KEY), changes.title);
       }
       if (changes.content === undefined) return;
-      if (type === NoteType.Document) {
+      if (type === NoteType.Documentation) {
+        replaceDocumentationContent(document, changes.content);
+      } else if (type === NoteType.Document) {
         replaceText(document.getText(TEXT_KEY), changes.content);
       } else {
         replaceBoard(document, changes.content);
@@ -734,7 +746,8 @@ export const validateCollaborationUpdate = (document: Y.Doc, update: Uint8Array,
     if (Y.encodeStateAsUpdate(candidate).byteLength > MAX_COLLABORATION_STATE_BYTES) throw new Error("Collaboration document is too large");
     const title = candidate.getText(TITLE_KEY).toString();
     if (title) validateNoteTitle(title);
-    const content = type === NoteType.Document ? candidate.getText(TEXT_KEY).toString() : boardContentFromDocument(candidate);
+    const content = type === NoteType.Documentation ? JSON.stringify(documentationContentFromDocument(candidate))
+      : type === NoteType.Document ? candidate.getText(TEXT_KEY).toString() : boardContentFromDocument(candidate);
     if (Buffer.byteLength(content, "utf8") > MAX_NOTE_CONTENT_BYTES) throw new Error("Note content is too large");
     if (type === NoteType.Whiteboard && !parseWhiteboardContent(content)) throw new Error("Invalid whiteboard update");
   } finally { candidate.destroy(); }

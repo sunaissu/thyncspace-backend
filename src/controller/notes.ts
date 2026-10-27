@@ -128,7 +128,7 @@ export const createNote: RequestHandler = async (req, res, next) => {
   try {
     const title = validateNoteTitle(req.body?.title);
     const type = validateNoteType(req.body?.type);
-    const content = validateNoteContentForType(req.body?.text, type);
+    const content = validateNoteContentForType(req.body?.text === undefined ? "" : req.body.text, type);
     const userId = getUserId(req);
     const newNote = await NoteModel.create({
       title,
@@ -248,8 +248,8 @@ export const updateNote: RequestHandler = async (req, res, next) => {
         if (editableNote.sharedWith.length) throw createHttpError(409, "Shared content must be changed through live editing");
         requireContentRevision(req.body?.expectedRevision, editableNote.contentRevision ?? 0);
       }
-      if (content !== undefined && editableNote.type === NoteType.Whiteboard) {
-        validateNoteContentForType(content, NoteType.Whiteboard);
+      if (content !== undefined) {
+        changes.content = validateNoteContentForType(content, editableNote.type as NoteType);
       }
 
       // The Yjs document is authoritative for every shared note. Updating only
@@ -310,8 +310,8 @@ export const updatePrivateNote: RequestHandler = async (req, res, next) => {
       }
 
       if (content !== undefined) requireContentRevision(req.body?.expectedRevision, note.contentRevision ?? 0);
-      if (content !== undefined && note.type === NoteType.Whiteboard) {
-        validateNoteContentForType(content, NoteType.Whiteboard);
+      if (content !== undefined) {
+        changes.content = validateNoteContentForType(content, note.type as NoteType);
       }
 
       await updateNoteState(

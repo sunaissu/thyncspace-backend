@@ -44,7 +44,7 @@ export const updateWorkspace: RequestHandler = async (req, res, next) => {
         if (!input || typeof input !== "object" || Array.isArray(input)) throw createHttpError(400, "Invalid search");
         const id = text(input.id, 36);
         if (!/^[a-z0-9-]+$/i.test(id)) throw createHttpError(400, "Invalid saved search ID");
-        if (!["all", "shared", "documents", "boards", "favorites", "pinned", "recent", "archived"].includes(input.view) || !["all", "mine", "shared"].includes(input.owner) || !["all", "document", "whiteboard"].includes(input.type)) throw createHttpError(400, "Invalid search filters");
+        if (!["all", "shared", "documents", "boards", "documentation", "favorites", "pinned", "recent", "archived"].includes(input.view) || !["all", "mine", "shared"].includes(input.owner) || !["all", "document", "whiteboard", "documentation"].includes(input.type)) throw createHttpError(400, "Invalid search filters");
         const search = { id, name: text(input.name, 80), query: text(input.query, 300, true), notebook: text(input.notebook, 80, true), tag: text(input.tag, 40, true).toLowerCase(), owner: input.owner, type: input.type, view: input.view, from: date(input.from), to: date(input.to) };
         if (search.from && search.to && search.from > search.to) throw createHttpError(400, "Search start date must precede its end date");
         const previous = workspace.searches.filter(value => value.id !== id);

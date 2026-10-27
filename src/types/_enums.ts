@@ -1,6 +1,7 @@
 export enum NoteType {
   Document = "document",
   Whiteboard = "whiteboard",
+  Documentation = "documentation",
 }
 
 export enum NoteStatus {

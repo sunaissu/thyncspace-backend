@@ -1,10 +1,11 @@
 import type * as Y from "yjs";
+import { documentationContentFromDocument } from "./documentation.js";
 
 /** Canonical materialized state: independent of replica GC/undo retention. */
 export function collaborationSnapshot(document: Y.Doc, type: string): string {
   const value = {
     title: document.getText("note-title").toString(),
-    content: type === "whiteboard" ? {
+    content: type === "documentation" ? documentationContentFromDocument(document) : type === "whiteboard" ? {
       elements: document.getMap("noteboard-elements").toJSON(),
       order: document.getArray("noteboard-order").toArray(),
       viewport: document.getMap("noteboard-viewport").toJSON(),
